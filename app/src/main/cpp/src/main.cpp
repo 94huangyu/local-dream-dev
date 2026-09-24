@@ -49,6 +49,7 @@
 //            [vae_encoder.bin] (optional; enables img2img/inpaint)
 //   zimage/klein: tokenizer.json dit.safetensors llm.gguf vae.safetensors
 //   qwen21:  tokenizer.json dit.gguf llm.gguf llm_vision.gguf vae.safetensors
+//   (either DiT may instead be the other of dit.safetensors / dit.gguf)
 // SD15/SDXL CLIP runs on MNN (CPU); Anima's CLIP (clip.bin) runs on QNN/HTP
 // (the C++ side still does the qwen token_emb lookup -> input_embedding).
 struct ServerOptions {
@@ -349,11 +350,18 @@ static std::unique_ptr<Pipeline> createPipeline(const ServerOptions &opts,
   // engine .so ships in the APK's native library directory. Its FastRPC skels
   // are copied from assets into the shared runtime directory at app startup.
   if (opts.isDit()) {
+    // The built-in packages ship dit.gguf (Qwen) or dit.safetensors (the FP8
+    // DiTs), but stable-diffusion.cpp reads either format for every kind, so
+    // an imported package may carry whichever one its weights came in.
+    const bool gguf_first =
+        opts.type == ServerOptions::ModelType::kQwenImage21;
     std::string dit_path =
-        (dir / (opts.type == ServerOptions::ModelType::kQwenImage21
-                    ? "dit.gguf"
-                    : "dit.safetensors"))
-            .string();
+        (dir / (gguf_first ? "dit.gguf" : "dit.safetensors")).string();
+    if (!std::filesystem::exists(dit_path)) {
+      const std::string alternate =
+          (dir / (gguf_first ? "dit.safetensors" : "dit.gguf")).string();
+      if (std::filesystem::exists(alternate)) dit_path = alternate;
+    }
     std::string llm_path = (dir / "llm.gguf").string();
     std::string llm_vision_path =
         opts.type == ServerOptions::ModelType::kQwenImage21

@@ -256,6 +256,8 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     val msgModelConversionFailed = stringResource(R.string.model_conversion_failed)
     val msgNpuModelAddedSuccess = stringResource(R.string.npu_model_added_success)
     val msgNpuModelAddFailed = stringResource(R.string.npu_model_add_failed)
+    val msgDitImportSuccess = stringResource(R.string.dit_import_success)
+    val msgDitImportFailed = stringResource(R.string.dit_import_failed)
     val msgDeleteSuccess = stringResource(R.string.delete_success)
     val msgDeleteFailed = stringResource(R.string.delete_failed)
     val msgUnsupportNpu = stringResource(R.string.unsupport_npu)
@@ -292,6 +294,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     var showEmbeddingManagerDialog by remember { mutableStateOf(false) }
     var showCustomModelDialog by remember { mutableStateOf(false) }
     var showCustomNpuModelDialog by remember { mutableStateOf(false) }
+    var showDitImportDialog by remember { mutableStateOf(false) }
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableStateOf("") }
     var extractByteProgress by remember { mutableStateOf<ExtractByteProgress?>(null) }
@@ -733,6 +736,54 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
         )
     }
 
+    if (showDitImportDialog) {
+        DitImportDialog(
+            existingIds = modelRepository.models.map { it.id }.toSet(),
+            onDismiss = { showDitImportDialog = false },
+            onImport = { request ->
+                showDitImportDialog = false
+                scope.launch {
+                    conversionProgress = ""
+                    extractByteProgress = null
+                    isConverting = true
+                    val error = try {
+                        DitModelImport.import(
+                            context = context,
+                            modelName = request.modelName,
+                            kind = request.kind,
+                            ditUri = request.ditUri,
+                            pickedComponents = request.pickedComponents,
+                            onStage = { stage -> conversionProgress = stage },
+                            onBytes = { copied, total ->
+                                val fraction = if (total > 0) {
+                                    (copied.toFloat() / total).coerceIn(0f, 1f)
+                                } else {
+                                    0f
+                                }
+                                extractByteProgress = ExtractByteProgress(copied, total, fraction)
+                            },
+                        )
+                        null
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e("DitModelImport", "import failed", e)
+                        e.message ?: context.getString(R.string.unknown_error)
+                    } finally {
+                        isConverting = false
+                        extractByteProgress = null
+                    }
+                    if (error == null) {
+                        modelRepository.refreshAllModels()
+                        snackbarHostState.showSnackbar(msgDitImportSuccess)
+                    } else {
+                        snackbarHostState.showSnackbar(msgDitImportFailed.format(error))
+                    }
+                }
+            },
+        )
+    }
+
     if (showDeleteConfirm && selectedModels.isNotEmpty()) {
         DeleteConfirmDialog(
             selectedCount = selectedModels.size,
@@ -1060,6 +1111,18 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                 onClick = { showCustomNpuModelDialog = true },
                                 modifier = Modifier.fillMaxWidth(),
                             )
+                        }
+                        // Imported DiTs run on the same engine as the built-in
+                        // ones, so offer the import only where that engine runs.
+                        if (DitEngine.isSupportedDevice()) {
+                            item {
+                                AddModelOutlinedCard(
+                                    label = stringResource(R.string.import_dit_model),
+                                    accent = true,
+                                    onClick = { showDitImportDialog = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
                         }
                     }
 

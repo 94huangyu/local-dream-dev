@@ -356,7 +356,7 @@ data class Model(
             }
         }
 
-        private fun markerFileName(ditKind: String): String = when (ditKind) {
+        fun markerFileName(ditKind: String): String = when (ditKind) {
             "zimage" -> "ZIMAGE"
             "klein" -> "KLEIN"
             "qwen21" -> "QWEN_IMAGE_2_1"
@@ -582,11 +582,17 @@ class ModelRepository private constructor(private val context: Context) {
         val modelId = modelDir.name
         // Imported models have no code-level defaults: config.json (if
         // bundled in the zip) wins, the generic placeholder prompts below
-        // only fill what it leaves unset.
-        val placeholders = ModelConfig(
-            prompt = "masterpiece, best quality, a cat sat on a mat,",
-            negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-        )
+        // only fill what it leaves unset. Imported DiTs start from the
+        // sampling settings of the built-in model of the same kind instead:
+        // SD-style CFG and negative prompts would break these distilled models.
+        val placeholders = if (ditKind.isNotEmpty()) {
+            DitModelImport.defaultsFor(ditKind)
+        } else {
+            ModelConfig(
+                prompt = "masterpiece, best quality, a cat sat on a mat,",
+                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+            )
+        }
         val config = ModelConfig.read(modelDir) ?: ModelConfig()
 
         return Model(
@@ -594,7 +600,7 @@ class ModelRepository private constructor(private val context: Context) {
             name = modelId,
             description = context.getString(R.string.custom_model),
             baseUrl = "",
-            generationSize = if (isSdxl || isAnima) 1024 else 512,
+            generationSize = if (isSdxl || isAnima || ditKind.isNotEmpty()) 1024 else 512,
             approximateSize = "Custom",
             isDownloaded = true,
             configDefaults = config.withFallback(placeholders),
