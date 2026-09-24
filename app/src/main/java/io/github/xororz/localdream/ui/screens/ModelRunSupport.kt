@@ -97,7 +97,12 @@ internal suspend fun checkBackendHealth(
 ) = withContext(Dispatchers.IO) {
     try {
         val startTime = System.currentTimeMillis()
-        val timeoutDuration = 60000
+        // Z-Image Turbo's cold start (SHA-256 validation of ~11GB of context
+        // binaries, then loading all 8 of them onto the HTP) alone can take
+        // 3-6 minutes; give every backend type generous headroom above that
+        // instead of a value tuned only for the much faster SD1.5/SDXL/Anima
+        // native processes.
+        val timeoutDuration = 600000
         // Poll fast while the backend is likely just starting, then back off:
         // model loading takes seconds to minutes, so hammering every 100 ms
         // for the whole window is pointless.

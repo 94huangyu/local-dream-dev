@@ -248,6 +248,12 @@ internal fun ControlledPromptTagTextField(
     autocompleteAvailable: Boolean,
     label: @Composable (() -> Unit),
     modifier: Modifier = Modifier,
+    // 折叠态的行数。默认 2 行与原先一致；Z-Image 没有负面提示词框，
+    // 把空出来的位置让给正向提示词（否则隐藏了负面框只是下面空一块，
+    // 正向框仍然死死 2 行 —— `PromptTagTextField` 的高度是行数驱动的，
+    // 与下方有没有别的控件无关）。
+    minCollapsedLines: Int = 2,
+    maxCollapsedLines: Int = 2,
 ) {
     val popupVisible =
         autocompleteAvailable && controller.isFocused && !controller.popupDismissed
@@ -285,5 +291,7 @@ internal fun ControlledPromptTagTextField(
                 TagAutocompleteRepository.adjustActiveTagWeight(text, sel, -0.1)
             }
         },
+        minCollapsedLines = minCollapsedLines,
+        maxCollapsedLines = maxCollapsedLines,
     )
 }

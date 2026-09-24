@@ -52,7 +52,11 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun AdvancedSettingsDialog(
-    isSdxl: Boolean,
+    // 🔴 曾叫 `isSdxl`，但调用方喂的一直是 `model.usesFixedCanvas`（SDXL/Anima/Z-Image
+    //    三者都为真）。名字与内容不符，2026-09-04 因此漏掉了 Z-Image 的分辨率选择器
+    //    —— grep 到 `!isSdxl` 后按字面理解，没去看调用方实际传了什么。已改名。
+    usesFixedCanvas: Boolean,
+    isZImage: Boolean,
     runOnCpu: Boolean,
     useImg2img: Boolean,
     isRunning: Boolean,
@@ -121,7 +125,9 @@ internal fun AdvancedSettingsDialog(
             ) {
                 // Aspect ratio needs the VAE encoder (inpaint-based padding),
                 // which --no_img2img does not load.
-                if (isSdxl && useImg2img) {
+                // 信箱裁切式的比例选择：需要 VAE encoder（inpaint padding），
+                // 只有 SDXL 那条路走得通。Z-Image 用的是真实多尺寸，见下面的分辨率块。
+                if (usesFixedCanvas && !isZImage && useImg2img) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             stringResource(R.string.aspect_ratio),
@@ -171,7 +177,10 @@ internal fun AdvancedSettingsDialog(
                         }
                     }
                 }
-                if (!runOnCpu && !isSdxl && availableResolutions.isNotEmpty()) {
+                // 固定画布的模型本来没有分辨率可选；Z-Image 是例外：它的每个尺寸
+                // 对应交付里一整套 QNN 图（台账 #86），所以照常渲染这一行。
+                if (!runOnCpu && (!usesFixedCanvas || isZImage) &&
+                    availableResolutions.isNotEmpty()) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             stringResource(R.string.resolution),
@@ -210,6 +219,14 @@ internal fun AdvancedSettingsDialog(
                     }
                 }
 
+                if (isZImage) {
+                    Text(
+                        "Z-Image Turbo 固定 8 步、CFG 0；尺寸只能从上面已交付的几个里选" +
+                            "（每个尺寸对应一整套 QNN 图）。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (!isZImage) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     // Split scheduler id into base + Karras flag so the UI
                     // can offer one base chip per family plus a single
@@ -316,6 +333,7 @@ internal fun AdvancedSettingsDialog(
                         steps = 57,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
                 }
                 if (runOnCpu) {
                     Column {

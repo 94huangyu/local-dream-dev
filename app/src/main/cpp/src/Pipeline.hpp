@@ -172,6 +172,9 @@ class Pipeline {
   // Anima runs the same fixed-1024 graphs as SDXL but isn't an SDXL pipeline;
   // the request parser uses this to force the 1024 canvas.
   virtual bool isAnima() const { return false; }
+  // Z-Image is also fixed-canvas, but it uses a single-condition FlowMatch
+  // loop instead of the shared negative/positive CFG batch.
+  virtual bool isZImage() const { return false; }
   // Ultrafix needs the VAE encoder (img2img) plus fixed-size graphs that can
   // be run as tiles; the MNN (CPU) format has neither constraint nor need.
   virtual bool supportsUltrafix() const {
@@ -186,9 +189,10 @@ class Pipeline {
   }
 
   // Mutates `req` only to release the decoded image buffer once it is no
-  // longer needed (a ~190 MB allocation at ultrafix sizes).
-  GenerationResult generate(GenerationRequest &req,
-                            const ProgressCallback &progress_callback);
+  // longer needed (a ~190 MB allocation at ultrafix sizes). Most pipelines
+  // use the shared implementation; Z-Image supplies its own CFG-free loop.
+  virtual GenerationResult generate(GenerationRequest &req,
+                                    const ProgressCallback &progress_callback);
 
  protected:
   // --- stage hooks -------------------------------------------------------

@@ -27,4 +27,5 @@
 	url = https://github.com/xtensor-stack/xtensor-blas.git
 [submodule "app/src/main/cpp/3rdparty/tokenizers-cpp"]
 	path = app/src/main/cpp/3rdparty/tokenizers-cpp
-	url = https://github.com/xororz/tokenizers-cpp.git
+	url = https://github.com/94huangyu/tokenizers-cpp.git
+	branch = qairt-dev

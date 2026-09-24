@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -127,6 +130,85 @@ inline std::unique_ptr<QnnModel> createAndInitModel(
   if (!app) throw std::runtime_error("Failed create QNN model: " + modelName);
   if (initializeApp(modelName, app) != EXIT_SUCCESS)
     throw std::runtime_error("Failed init QNN model: " + modelName);
+  return app;
+}
+
+// Context binaries already contain their compiled graph; unlike model-library
+// loading, they must be supplied to QNN as an in-memory binary.
+inline std::unique_ptr<QnnModel> createAndInitContext(
+    const std::string &contextPath, const std::string &modelName,
+    const std::string &enabledGraph = std::string(),
+    // 跨 context 共享 HTP spill-fill 暂存区（台账 #146）。
+    // sfBytes = 组内最大的 spillFillBufferSize；groupHead = 组长的 context handle
+    // （组长自己传 nullptr）。两者都必须在 createFromBinary **之前**设好。
+    // 机制在本仓库的 PipelineAnima / PipelineSdxl 上已在用，Z-Image 一直没接。
+    uint64_t sfBytes = 0, Qnn_ContextHandle_t groupHead = nullptr) {
+  std::ifstream file(contextPath, std::ios::binary | std::ios::ate);
+  if (!file) throw std::runtime_error("Failed open QNN context: " + contextPath);
+  const auto size = static_cast<uint64_t>(file.tellg());
+  if (size == 0) throw std::runtime_error("Empty QNN context: " + contextPath);
+
+  // 🔴 P2/H2（台账 #174）：默认路径是「整文件读进 vector」——先把 2~3 GB 匿名内存清零，
+  //    再整份拷贝一遍，然后才交给 QNN。实测四段在标记前的空白合计 12.19 s（`Initializing`
+  //    标记之前那段），远大于 createFromBuffer 自己的 7.97 s。
+  //    mmap 路径省掉「清零 + 一次拷贝」，且不占匿名内存（#144：装载期 VmRSS 峰值就是这份缓冲）。
+  //    ⚠️ 用 marker 文件做开关，**同一个 APK 跑两臂**，保证 A/B 是严格单变量；
+  //       QNN 在 createFromBinary 返回后不再引用该缓冲（现有实现本来就在函数返回时释放 vector），
+  //       所以映射只需活到 initializeApp 结束。
+  // marker 两处都认：`files/models/ZIMAGE/LOAD_MMAP`（与 SHARE_SPILLFILL 同级，推荐）
+  // 或 `files/models/ZIMAGE/models/LOAD_MMAP`（与 .bin 同级）。
+  const auto ctx_dir = std::filesystem::path(contextPath).parent_path();
+  const bool use_mmap = std::filesystem::is_regular_file(ctx_dir / "LOAD_MMAP") ||
+                        std::filesystem::is_regular_file(ctx_dir.parent_path() / "LOAD_MMAP");
+  std::vector<uint8_t> bytes;
+  const uint8_t *data = nullptr;
+  struct MapGuard {
+    void *addr = nullptr;
+    size_t len = 0;
+    int fd = -1;
+    ~MapGuard() {
+      if (addr && addr != MAP_FAILED) munmap(addr, len);
+      if (fd >= 0) close(fd);
+    }
+  } guard;
+
+  // 🔴 这一行必须打在「读入 / 映射」**之前**。第一版打在之后，于是
+  //    `[loadpath] → QNN App Initialized` 这个区间**恰好把要省的那段排除在外**，
+  //    两臂会量出几乎一样的数 ⇒ H2 无论真假都测不出来（约束 9 自审第 1 条抓出）。
+  QNN_INFO("[loadpath] %s %s (%llu bytes)", use_mmap ? "mmap" : "read-into-vector",
+           modelName.c_str(), (unsigned long long)size);
+  if (use_mmap) {
+    guard.fd = open(contextPath.c_str(), O_RDONLY);
+    if (guard.fd < 0) throw std::runtime_error("Failed open(2) QNN context: " + contextPath);
+    guard.len = static_cast<size_t>(size);
+    guard.addr = mmap(nullptr, guard.len, PROT_READ, MAP_PRIVATE, guard.fd, 0);
+    if (guard.addr == MAP_FAILED)
+      throw std::runtime_error("Failed mmap QNN context: " + contextPath);
+    madvise(guard.addr, guard.len, MADV_SEQUENTIAL);
+    madvise(guard.addr, guard.len, MADV_WILLNEED);
+    data = static_cast<const uint8_t *>(guard.addr);
+  } else {
+    bytes.resize(static_cast<size_t>(size));
+    file.seekg(0);
+    if (!file.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(size)))
+      throw std::runtime_error("Failed read QNN context: " + contextPath);
+    data = bytes.data();
+  }
+
+  // Context creation needs the backend and system libraries, not a per-model
+  // shared library. DynamicLoadUtil accepts an empty optional model path.
+  auto app = createModel("", modelName);
+  if (!app) throw std::runtime_error("Failed create QNN context model: " + modelName);
+  // Multi-graph context (ledger #86): must be set BEFORE createFromBinary.
+  // Two device-measured facts drive this:
+  //   1. Without ENABLE_GRAPHS the whole binary is deserialized and
+  //      createFromBinary fails with 0x3ea (PD capacity) -- required, not optional.
+  //   2. graphRetrieve() succeeds even for graphs that were not enabled, so the
+  //      graph must be picked BY NAME; QnnModel does that internally.
+  if (!enabledGraph.empty()) app->setEnabledGraph(enabledGraph.c_str());
+  if (sfBytes) app->setSpillFillGroup(sfBytes, groupHead);
+  if (initializeApp(modelName, app, data, size) != EXIT_SUCCESS)
+    throw std::runtime_error("Failed init QNN context: " + modelName);
   return app;
 }
 

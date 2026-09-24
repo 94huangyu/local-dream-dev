@@ -38,6 +38,7 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.LocalDream"
             android:windowSoftInputMode="adjustResize">

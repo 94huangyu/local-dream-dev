@@ -427,6 +427,22 @@ class BackendService : Service() {
                 Log.e(TAG, "error: executable does not exist: ${executableFile.absolutePath}")
                 return false
             }
+            val qnnRuntimeDir = if (backendType == "zimage") {
+                val deliveredRuntime = File(modelsDir, "qnn_runtime_libs/aarch64-android")
+                // MVP targets HTP v79 (Snapdragon 8 Elite / SM8750) only. The
+                // matching DSP-side libQnnHtpV79Skel.so ships alongside the
+                // stub in this same directory (copied from the QAIRT SDK's
+                // redistributable lib/hexagon-v79/unsigned/ at model-export
+                // time), so DSP_LIBRARY_PATH below needs no on-device search.
+                val required = listOf("libQnnHtp.so", "libQnnSystem.so", "libQnnHtpV79Stub.so")
+                if (!required.all { File(deliveredRuntime, it).isFile }) {
+                    Log.e(TAG, "Z-Image runtime is incomplete: ${deliveredRuntime.absolutePath}")
+                    return false
+                }
+                deliveredRuntime
+            } else {
+                runtimeDir
+            }
 
             val preferences = this.getSharedPreferences("app_prefs", MODE_PRIVATE)
             val useImg2img = preferences.getBoolean("use_img2img", true)
@@ -459,9 +475,12 @@ class BackendService : Service() {
                 )
             }
             if (backendType != "sd15cpu" && backendType != BACKEND_TYPE_UPSCALER) {
-                command += listOf("--lib_dir", runtimeDir.absolutePath)
+                command += listOf("--lib_dir", qnnRuntimeDir.absolutePath)
             }
-            if (!useImg2img && backendType != BACKEND_TYPE_UPSCALER) {
+            // Z-Image Turbo v1 is text-to-image only and deliberately ships
+            // without a VAE encoder. Force the native process not to request
+            // one even if the global img2img preference is enabled.
+            if ((!useImg2img || backendType == "zimage") && backendType != BACKEND_TYPE_UPSCALER) {
                 command += "--no_img2img"
             }
             if (backendType == "sd15npu" && (width != 512 || height != 512)) {
@@ -511,13 +530,20 @@ class BackendService : Service() {
                     command += "--anima_seq_dit"
                 }
             }
+            // Z-Image has separate text encoder, split Transformer and VAE
+            // contexts. Its native pipeline loads/releases stages in sequence;
+            // keep that mode mandatory until real-device memory measurements
+            // demonstrate a safe resident alternative.
+            if (backendType == "zimage") {
+                command += "--lowram"
+            }
             if (listenOnAll) {
                 command += "--listen_all"
             }
             val env = mutableMapOf<String, String>()
 
             val systemLibPaths = mutableListOf(
-                runtimeDir.absolutePath,
+                qnnRuntimeDir.absolutePath,
                 "/system/lib64",
                 "/vendor/lib64",
                 "/vendor/lib64/egl",
@@ -547,17 +573,17 @@ class BackendService : Service() {
             }
             val systemLibPathsStr = systemLibPaths.joinToString(":")
             env["LD_LIBRARY_PATH"] = systemLibPathsStr
-            env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
+            env["DSP_LIBRARY_PATH"] = qnnRuntimeDir.absolutePath
 
             Log.d(TAG, "COMMAND: ${command.joinToString(" ")}")
-            Log.d(TAG, "DIR: $runtimeDir")
+            Log.d(TAG, "QNN DIR: $qnnRuntimeDir")
             Log.d(TAG, "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
             Log.d(TAG, "DSP_LIBRARY_PATH=${env["DSP_LIBRARY_PATH"]}")
 
             val processBuilder = ProcessBuilder(command).apply {
                 directory(File(nativeDir))
-                redirectErrorStream(true)
                 environment().putAll(env)
+                redirectErrorStream(true)
             }
 
             val proc = processBuilder.start()

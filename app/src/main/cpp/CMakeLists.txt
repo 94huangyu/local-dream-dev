@@ -4,13 +4,31 @@ project(libstable_diffusion_core.so C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# QNN SDK PATH
-set(QNN_SDK_ROOT /data/qairt/2.39.0.250926)
+# QNN SDK path.  Gradle may pass -DQNN_SDK_ROOT=<path>; never overwrite that
+# explicit value with the old developer-machine fallback.
+if(NOT DEFINED QNN_SDK_ROOT OR QNN_SDK_ROOT STREQUAL "")
+    if(DEFINED ENV{QNN_SDK_ROOT})
+        set(QNN_SDK_ROOT $ENV{QNN_SDK_ROOT})
+    else()
+        set(QNN_SDK_ROOT /data/qairt/2.39.0.250926)
+    endif()
+endif()
+if(NOT EXISTS "${QNN_SDK_ROOT}/examples/QNN/SampleApp/SampleApp")
+    message(FATAL_ERROR
+        "QNN SDK not found at '${QNN_SDK_ROOT}'. Set qnn.sdk.dir=<QAIRT SDK root> in "
+        "local.properties (or Gradle property qnn.sdk.dir / environment QNN_SDK_ROOT).")
+endif()
 
 file(COPY ${QNN_SDK_ROOT}/examples/QNN/SampleApp/SampleApp/
     DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/SampleApp)
+get_filename_component(GRADLE_PROJECT_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+if(NOT EXISTS "${GRADLE_PROJECT_ROOT}/settings.gradle.kts")
+    message(FATAL_ERROR
+        "Unable to locate Gradle project root from ${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
 execute_process(COMMAND git apply --directory=app/src/main/cpp/ --verbose ${CMAKE_CURRENT_SOURCE_DIR}/SampleApp.patch
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${GRADLE_PROJECT_ROOT}
     RESULT_VARIABLE patch_result
     OUTPUT_VARIABLE patch_output
     ERROR_VARIABLE patch_error
@@ -18,6 +36,11 @@ execute_process(COMMAND git apply --directory=app/src/main/cpp/ --verbose ${CMAK
 message(STATUS "Patch: ${patch_result}")
 message(STATUS "Patch: ${patch_output}")
 message(STATUS "Patch: ${patch_error}")
+if(NOT patch_result EQUAL 0)
+    message(FATAL_ERROR
+        "SampleApp.patch did not apply to this QAIRT SDK. Stop here: do not build "
+        "or package an APK with an unverified SampleApp integration.")
+endif()
 
 make_directory(${CMAKE_CURRENT_BINARY_DIR}/qnnlibs)
 file(COPY ${QNN_SDK_ROOT}/lib/aarch64-android/libQnnHtp.so
@@ -61,17 +84,24 @@ file(COPY ${QNN_SDK_ROOT}/lib/hexagon-v81/unsigned/libQnnHtpV81.so
 file(COPY ${QNN_SDK_ROOT}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so
     DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/qnnlibs)
 
-if(WIN32)
-    set(PLATFORM_NAME "windows")
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
     set(HOST_TAG "windows-x86_64")
-else()
-    set(PLATFORM_NAME "linux")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    set(HOST_TAG "darwin-x86_64")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
     set(HOST_TAG "linux-x86_64")
+else()
+    message(FATAL_ERROR "Unsupported Android build host: ${CMAKE_HOST_SYSTEM_NAME}")
 endif()
 
 set(OUTPUT_SUFFIX ${CMAKE_ANDROID_ARCH_ABI})
 set(PLATFORM_LIBS log android dl m c GLESv2 EGL)
-set(ANDROID_TOOLCHAIN_ROOT ${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${HOST_TAG} CACHE PATH "Android NDK root path")
+set(ANDROID_TOOLCHAIN_ROOT "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${HOST_TAG}")
+if(NOT EXISTS "${ANDROID_TOOLCHAIN_ROOT}/bin/llvm-ar" AND
+   NOT EXISTS "${ANDROID_TOOLCHAIN_ROOT}/bin/llvm-ar.exe")
+    message(FATAL_ERROR
+        "Android NDK host toolchain not found: ${ANDROID_TOOLCHAIN_ROOT}")
+endif()
 
 add_compile_options(
     -O3
@@ -142,6 +172,17 @@ if(NOT DEFINED CMAKE_ANDROID_ARCH_ABI)
 endif()
 if(NOT DEFINED ANDROID_ABI)
     set(ANDROID_ABI ${CMAKE_ANDROID_ARCH_ABI} CACHE STRING "Android ABI" FORCE)
+endif()
+
+# sentencepiece needs a protoc that runs on the build host (see app/build.gradle.kts).
+if(NOT SPM_PROTOC_EXECUTABLE)
+    find_program(SPM_PROTOC_EXECUTABLE protoc NO_CMAKE_FIND_ROOT_PATH)
+endif()
+if(NOT SPM_PROTOC_EXECUTABLE OR NOT EXISTS "${SPM_PROTOC_EXECUTABLE}")
+    message(FATAL_ERROR
+        "Host protoc not found ('${SPM_PROTOC_EXECUTABLE}'). Download protoc 35.1 for "
+        "your build OS from https://github.com/protocolbuffers/protobuf/releases and set "
+        "spm.protoc.exe=<path to protoc> in local.properties, or put protoc on PATH.")
 endif()
 
 add_subdirectory(${TOKENZIER_CPP_PATH} tokenizers EXCLUDE_FROM_ALL)

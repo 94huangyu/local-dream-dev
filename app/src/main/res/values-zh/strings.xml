@@ -276,6 +276,7 @@
     <string name="model_conversion_success">模型转换成功！</string>
     <string name="model_conversion_failed">转换失败: %s</string>
     <string name="npu_model_added_success">NPU模型添加成功！</string>
+    <string name="npu_model_added_success_verify">NPU模型添加成功！首次启动会校验模型完整性（约 20 秒），之后不再重复。</string>
     <string name="npu_model_add_failed">NPU模型添加失败: %s</string>
     <string name="preparing_model">准备模型中…</string>
     <string name="preparing_npu_model">准备NPU模型中…</string>

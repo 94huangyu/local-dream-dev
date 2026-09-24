@@ -286,6 +286,10 @@
     <string name="model_conversion_success">Model conversion successful!</string>
     <string name="model_conversion_failed">Conversion failed: %s</string>
     <string name="npu_model_added_success">NPU model added successfully!</string>
+    <!-- Z-Image only: its contract carries a SHA-256 per file and the first launch
+         verifies them (~12 GiB). The result is cached, so later launches skip it.
+         Shown instead of the plain success message so that one-off wait is expected. -->
+    <string name="npu_model_added_success_verify">NPU model added successfully! The first launch verifies model integrity (about 20 seconds); later launches skip it.</string>
     <string name="npu_model_add_failed">NPU model add failed: %s</string>
     <string name="preparing_model">Preparing model…</string>
     <string name="preparing_npu_model">Preparing NPU model…</string>

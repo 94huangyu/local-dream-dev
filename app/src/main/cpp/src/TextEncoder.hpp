@@ -6,9 +6,11 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -18,6 +20,7 @@
 #include "MemUtils.hpp"
 #include "PromptProcessor.hpp"
 #include "SDUtils.hpp"
+#include "ZImagePrompt.hpp"
 #include "tokenizers_cpp.h"
 
 // Count the UTF-16 code units in the first byteOffset bytes of a UTF-8 string.
@@ -110,6 +113,14 @@ struct ProcessedPromptPair {
   std::vector<float> negative_t5_mask, positive_t5_mask;
 };
 
+// Qwen3 inputs used by the Z-Image Turbo text encoder graph. The exported QNN
+// graph must preserve these dtypes: ids and the mask are both int32.
+struct ZImageTextInput {
+  std::vector<int32_t> input_ids;
+  std::vector<int32_t> attention_mask;
+  int token_count = 0;
+};
+
 // Result of token counting for the /tokenize endpoint.
 struct TokenizeInfo {
   int count = 2;  // BOS + EOS
@@ -124,11 +135,12 @@ struct TokenizeInfo {
 // encoder 2).
 class TextEncoder {
  public:
-  explicit TextEncoder(bool sdxl, bool anima = false)
-      : sdxl_(sdxl), anima_(anima) {}
+  explicit TextEncoder(bool sdxl, bool anima = false, bool zimage = false)
+      : sdxl_(sdxl), anima_(anima), zimage_(zimage) {}
 
   bool isSdxl() const { return sdxl_; }
   bool isAnima() const { return anima_; }
+  bool isZImage() const { return zimage_; }
   tokenizers::Tokenizer *tokenizer() { return tokenizer_.get(); }
 
   void loadTokenizer(const std::string &path) {
@@ -155,6 +167,9 @@ class TextEncoder {
       loadTokenEmb(dir / "token_emb.bin", token_emb_, /*force_fp16=*/true);
       return;
     }
+    // Z-Image's Qwen embedding layer lives inside text_encoder.bin. There is
+    // no host-side token/position table to load.
+    if (zimage_) return;
     loadPosEmb(dir / "pos_emb.bin", pos_emb_);
     loadTokenEmb(dir / "token_emb.bin", token_emb_, /*force_fp16=*/sdxl_);
     if (sdxl_) {
@@ -181,6 +196,28 @@ class TextEncoder {
 
   std::string decode(const std::vector<int> &ids) {
     return tokenizer_->Decode(ids);
+  }
+
+  // Applies the official Z-Image Qwen chat template for Local Dream's one-shot
+  // text-to-image request, tokenizes it with the delivered QNN graph's fixed
+  // length, then pads with Qwen's end-of-text pad id. Prompt weighting and textual inversion are not
+  // applied: neither is part of the official Z-Image tokenizer path.
+  ZImageTextInput processZImagePrompt(const std::string &prompt_text) {
+    if (!zimage_)
+      throw std::logic_error("Z-Image prompt requested from a non-Z-Image encoder");
+    if (!tokenizer_) throw std::runtime_error("Z-Image tokenizer not loaded");
+
+    const auto ids = tokenizer_->Encode(formatZImagePrompt(prompt_text));
+    ZImageTextInput result;
+    result.input_ids.assign(zimage_text_max_length, kQwenPadId);
+    result.attention_mask.assign(zimage_text_max_length, 0);
+    result.token_count = std::min(static_cast<int>(ids.size()),
+                                  zimage_text_max_length);
+    for (int i = 0; i < result.token_count; ++i) {
+      result.input_ids[i] = static_cast<int32_t>(ids[i]);
+      result.attention_mask[i] = 1;
+    }
+    return result;
   }
 
   ProcessedPrompt processWeightedPrompt(const std::string &prompt_text,
@@ -432,8 +469,13 @@ class TextEncoder {
       return info;
     }
 
-    // Tokens that fit alongside the implicit BOS/EOS markers.
-    const int budget = max_len - 2;
+    // Tokens that fit alongside the implicit BOS/EOS markers. Z-Image is not
+    // BOS/EOS framed: processZImagePrompt wraps the prompt in the Qwen chat
+    // template, which eats zimage_text_template_tokens (8) of the 20 slots.
+    // Reporting 2 here is what made the UI counter claim "n/77" while the
+    // backend silently truncated at 20 (ledger #134).
+    const int extra = zimage_ ? zimage_text_template_tokens : 2;
+    const int budget = max_len - extra;
     if (text.empty()) return info;
 
     auto tokens = promptProcessor_.process(text);
@@ -465,7 +507,7 @@ class TextEncoder {
       }
       content += tc;
     }
-    info.count = content + 2;  // BOS + EOS
+    info.count = content + extra;  // BOS+EOS, or Z-Image's chat template
     return info;
   }
 
@@ -574,6 +616,7 @@ class TextEncoder {
 
   bool sdxl_ = false;
   bool anima_ = false;
+  bool zimage_ = false;
   std::shared_ptr<tokenizers::Tokenizer> tokenizer_;
   std::shared_ptr<tokenizers::Tokenizer> t5_tokenizer_;
   PromptProcessor promptProcessor_;

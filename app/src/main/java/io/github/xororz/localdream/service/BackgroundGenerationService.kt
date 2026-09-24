@@ -69,14 +69,35 @@ class BackgroundGenerationService : Service() {
         private val _isServiceRunning = MutableStateFlow(false)
         val isServiceRunning: StateFlow<Boolean> = _isServiceRunning
 
+        // 2026-08-26 (ledger #126): generationState is a *process-global*
+        // StateFlow, so every live ModelRunScreen composition receives the same
+        // Complete and each used to write its own history row from its own
+        // generationParamsTmp. Device-measured that day: 4 MainActivity
+        // instances, 2 of them holding a ModelRunScreen => 2 rows per
+        // generation, identical in all 19 other columns and 0-1ms apart,
+        // differing only in prompt. Collapsing the stack to 1 instance gave
+        // exactly 1 row. launchMode=singleTask now prevents the stacking; this
+        // gate is the second layer, and unlike the manifest fix it also covers
+        // two compositions inside one Activity. Each Complete instance can be
+        // claimed exactly once.
+        private val claimedComplete =
+            java.util.concurrent.atomic.AtomicReference<GenerationState?>(null)
+
+        fun claimComplete(state: GenerationState.Complete): Boolean =
+            claimedComplete.getAndSet(state) !== state
+
         fun resetState() {
             _generationState.value = GenerationState.Idle
             _bitmapConsumed.value = false
+            // Also drops this reference to the finished Complete, which would
+            // otherwise pin a 1024x1024 Bitmap for the life of the process.
+            claimedComplete.set(null)
         }
 
         fun clearCompleteState() {
             if (_generationState.value is GenerationState.Complete) {
                 _generationState.value = GenerationState.Idle
+                claimedComplete.set(null)
             }
         }
 

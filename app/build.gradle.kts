@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -25,17 +27,39 @@ detekt {
     source.setFrom(files("src/main/java", "src/main/kotlin"))
 }
 
+// Machine-specific build paths: Gradle property (-P / ~/.gradle/gradle.properties),
+// then the untracked local.properties, then an environment variable. Nothing is
+// hard-coded here; CMake stops with setup instructions when a path is missing.
+val localProps =
+    Properties().apply {
+        rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+    }
+
+fun machinePath(
+    key: String,
+    env: String,
+): String? =
+    (project.findProperty(key) as String?)
+        ?: localProps.getProperty(key)
+        ?: System.getenv(env)
+
 android {
     namespace = "io.github.xororz.localdream"
     compileSdk = 37
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "io.github.xororz.localdream"
+        // Keep this Z-Image edition installable beside the upstream Local Dream
+        // app, regardless of which key signed that other APK.
+        applicationId = "io.github.xororz.localdream.zimage"
         minSdk = 28
 //        minSdk = 31
         targetSdk = 36
-        versionCode = 74
-        versionName = "2.8.1"
+        // Ahead of the version already installed on the test device (a hand-
+        // patched build from an earlier session) so `adb install -r` upgrades
+        // in place instead of tripping Android's downgrade guard.
+        versionCode = 100
+        versionName = "2.8.1-zimage-mvp"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -44,6 +68,19 @@ android {
         ndk {
             //noinspection ChromeOsAbiSupport
             abiFilters += "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                // qnn.sdk.dir: QAIRT SDK root (e.g. .../qairt/2.48.0.260626).
+                // spm.protoc.exe: host-native protoc 35.1. sentencepiece's vendored
+                // protobuf is built for the Android target only; without a host
+                // protoc it tries to run the cross-compiled arm64-v8a protoc on
+                // the build host to generate sentencepiece_model.pb.cc/.h.
+                machinePath("qnn.sdk.dir", "QNN_SDK_ROOT")?.let { arguments("-DQNN_SDK_ROOT=$it") }
+                machinePath("spm.protoc.exe", "SPM_PROTOC_EXECUTABLE")?.let {
+                    arguments("-DSPM_PROTOC_EXECUTABLE=$it")
+                }
+            }
         }
     }
 
@@ -105,6 +142,12 @@ android {
             versionNameSuffix = "_with_filter"
         }
     }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 }
 
 kotlin {
@@ -118,7 +161,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val versionName = output.versionName.orNull
             if (output is com.android.build.api.variant.impl.VariantOutputImpl) {
-                output.outputFileName.set("LocalDream_armv8a_$versionName.apk")
+                output.outputFileName.set("LocalDreamZImage_armv8a_$versionName.apk")
             }
         }
     }

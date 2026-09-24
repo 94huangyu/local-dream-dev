@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 @Immutable
 data class Resolution(val width: Int, val height: Int) {
@@ -124,22 +125,24 @@ data class Model(
     val isCustom: Boolean = false,
     val isSdxl: Boolean = false,
     val isAnima: Boolean = false,
+    val isZImage: Boolean = false,
 
 ) {
     // Per-field priority: code defaults > config.json > global defaults.
     val defaults: GenerationDefaults
         get() = codeDefaults.withFallback(configDefaults).resolve()
 
-    // SDXL and Anima both render on a fixed 1024 canvas and reach non-1:1
+    // SDXL, Anima, and Z-Image render on a fixed 1024 canvas and reach non-1:1
     // outputs via aspect-ratio inpaint padding; the run screen treats them
     // alike for default size and aspect-ratio handling (ultrafix stays
     // SDXL-only). SD1.5 NPU/CPU use their own sizes / resolution patches.
     val usesFixedCanvas: Boolean
-        get() = isSdxl || isAnima
+        get() = isSdxl || isAnima || isZImage
 
     // Backend --type value; each type implies the full model file layout.
     val backendType: String
         get() = when {
+            isZImage -> "zimage"
             isAnima -> "anima"
             isSdxl -> "sdxl"
             runOnCpu -> "sd15cpu"
@@ -462,8 +465,18 @@ class ModelRepository private constructor(private val context: Context) {
                 val npuCustomFile = File(dir, "npucustom")
                 val sdxlFile = File(dir, "SDXL")
                 val animaFile = File(dir, "ANIMA")
+                val zimageFile = File(dir, "ZIMAGE")
 
                 when {
+                    zimageFile.exists() && isCompleteZImageBundle(dir) ->
+                        customModels.add(createCustomModel(dir, isNpu = true, isZImage = true))
+
+                    zimageFile.exists() ->
+                        Log.w(
+                            "ModelRepository",
+                            "skip incomplete Z-Image bundle '$modelId': QNN contract or required graph is missing",
+                        )
+
                     animaFile.exists() ->
                         customModels.add(createCustomModel(dir, isNpu = true, isAnima = true))
 
@@ -482,7 +495,109 @@ class ModelRepository private constructor(private val context: Context) {
         return customModels.sortedBy { it.name.lowercase() }
     }
 
-    private fun createCustomModel(modelDir: File, isNpu: Boolean = false, isSdxl: Boolean = false, isAnima: Boolean = false): Model {
+    // A ZIMAGE marker alone is intentionally insufficient. It prevents an
+    // interrupted copy/conversion from appearing in the model list and later
+    // failing as a misleading localhost backend error.
+    private fun isCompleteZImageBundle(dir: File): Boolean {
+        val tokenizer = File(dir, "tokenizer/tokenizer.json").takeIf { it.isFile }
+            ?: File(dir, "tokenizer.json").takeIf { it.isFile }
+        if (tokenizer == null) {
+            Log.w("ModelTest", "isCompleteZImageBundle failed: tokenizer not found in ${dir.canonicalPath}")
+            return false
+        }
+
+        val contract = File(dir, "final_qnn_contract.json")
+        if (!contract.isFile) {
+            Log.w("ModelTest", "isCompleteZImageBundle failed: final_qnn_contract.json not found in ${dir.canonicalPath}")
+            return false
+        }
+
+        val qnnRuntimeDir = File(dir, "qnn_runtime_libs/aarch64-android")
+        val missingSo = listOf("libQnnHtp.so", "libQnnSystem.so", "libQnnHtpV79Stub.so")
+            .firstOrNull { !File(qnnRuntimeDir, it).isFile }
+        if (missingSo != null) {
+            Log.w("ModelTest", "isCompleteZImageBundle failed: missing SO file $missingSo")
+            return false
+        }
+
+        return runCatching {
+            val json = JSONObject(contract.readText())
+            // Only the "models" schema is runnable. This used to also accept a
+            // "graphs" array, which made a bundle pass validation here and then
+            // fail later inside the native pipeline: ZImageQnnContract routes a
+            // contract without "models" to the legacy path, which registers just
+            // four graph names (text_encoder, transformer_part1, transformer_part2,
+            // vae_decoder) while PipelineZImage asks for text_encoder_part1..4 and
+            // transformer_part1a/1b — so the very first loadGraph() throws
+            // "Unknown Z-Image graph". Rejecting it here turns a confusing
+            // mid-generation crash into a clear "wrong schema" message.
+            val models = json.optJSONArray("models")
+            if (models == null) {
+                val legacy = if (json.has("graphs")) " (found legacy \"graphs\" schema, which the native pipeline cannot load)" else ""
+                Log.w("ModelTest", "isCompleteZImageBundle failed: contract has no \"models\" array$legacy")
+                throw org.json.JSONException("Z-Image contract must use the \"models\" schema$legacy")
+            }
+
+            // Two accepted transformer layouts. The 4-segment one exists
+            // because the per-row quantized single transformer_part2 context
+            // (3535MB) exceeds the device's unsigned PD ceiling and fails to
+            // load, so part2 ships as two ~1.9GB halves. Exact-set equality is
+            // kept per layout: a bundle carrying part2 *and* part2a would be
+            // ambiguous about which one the pipeline should run.
+            val commonGraphs = setOf(
+                "text_encoder_part1", "text_encoder_part2", "text_encoder_part3",
+                "text_encoder_part4", "transformer_part1a", "transformer_part1b",
+                "vae_decoder",
+            )
+            val singlePart2 = commonGraphs + "transformer_part2"
+            val splitPart2 = commonGraphs + setOf("transformer_part2a", "transformer_part2b")
+
+            val binaries = mutableMapOf<String, String>()
+            for (index in 0 until models.length()) {
+                val model = models.getJSONObject(index)
+                binaries[model.getString("internal_graph_name")] =
+                    model.getString("context_binary")
+            }
+
+            val requiredGraphs = if (binaries.keys.contains("transformer_part2a")) {
+                splitPart2
+            } else {
+                singlePart2
+            }
+
+            if (binaries.keys != requiredGraphs) {
+                Log.w("ModelTest", "isCompleteZImageBundle failed: keys mismatch. Expected: $requiredGraphs, Got: ${binaries.keys}")
+                return@runCatching false
+            }
+
+            var allValid = true
+            for ((key, relativePath) in binaries) {
+                if (File(relativePath).isAbsolute) {
+                    Log.w("ModelTest", "isCompleteZImageBundle failed: relativePath is absolute ($relativePath)")
+                    allValid = false
+                    continue
+                }
+                val candidate = File(dir, relativePath)
+                val startsWith = candidate.canonicalPath.startsWith(dir.canonicalPath + File.separator)
+                val isFile = candidate.isFile
+                if (!startsWith || !isFile) {
+                    Log.w("ModelTest", "isCompleteZImageBundle failed at candidate $relativePath. startsWith=$startsWith, isFile=$isFile, canonicalPath=${candidate.canonicalPath}")
+                    allValid = false
+                }
+            }
+            allValid
+        }.onFailure { e ->
+            Log.w("ModelTest", "isCompleteZImageBundle failed with exception: ${e.message}", e)
+        }.getOrDefault(false)
+    }
+
+    private fun createCustomModel(
+        modelDir: File,
+        isNpu: Boolean = false,
+        isSdxl: Boolean = false,
+        isAnima: Boolean = false,
+        isZImage: Boolean = false,
+    ): Model {
         val modelId = modelDir.name
         // Imported models have no code-level defaults: config.json (if
         // bundled in the zip) wins, the generic placeholder prompts below
@@ -498,40 +613,36 @@ class ModelRepository private constructor(private val context: Context) {
             name = modelId,
             description = context.getString(R.string.custom_model),
             baseUrl = "",
-            generationSize = if (isSdxl || isAnima) 1024 else 512,
+            generationSize = if (isSdxl || isAnima || isZImage) 1024 else 512,
             approximateSize = "Custom",
             isDownloaded = true,
+            // Turbo is a distilled CFG-free pipeline.  These code defaults
+            // deliberately win over a copied config.json and old per-model
+            // preferences; the native side repeats the same enforcement.
+            codeDefaults = if (isZImage) {
+                ModelConfig(
+                    steps = 8f,
+                    cfg = 0f,
+                    scheduler = "zimage_flowmatch",
+                )
+            } else {
+                ModelConfig()
+            },
             configDefaults = config.withFallback(placeholders),
             runOnCpu = !isNpu,
             isCustom = true,
             isSdxl = isSdxl,
             isAnima = isAnima,
+            isZImage = isZImage,
         )
     }
 
+    // MVP: this build only ships Z-Image Turbo. The full predefined SD1.5/SDXL
+    // catalog (download entries for Illustrious, CyberRealistic, AnythingV5,
+    // etc.) is intentionally omitted so the model list shows just whatever
+    // Z-Image bundle the user has imported.
     private fun initializeModels(): List<Model> {
-        val customModels = scanCustomModels()
-
-        val predefinedModels = mutableListOf<Model>().apply {
-            if (isSdxlCapableSoc(getDeviceSoc())) {
-                add(createIllustriousV16Model())
-                add(createIllustriousV16Dmd2Model())
-                add(createCyberRealisticV10Model())
-                add(createCyberRealisticV10Dmd2Model())
-            }
-            add(createAnythingV5Model())
-            add(createAnythingV5ModelCPU())
-            add(createQteaMixModel())
-            add(createQteaMixModelCPU())
-            add(createAbsoluteRealityModel())
-            add(createAbsoluteRealityModelCPU())
-            add(createCuteYukiMixModel())
-            add(createCuteYukiMixModelCPU())
-            add(createChilloutMixModelCPU())
-            add(createChilloutMixModel())
-        }
-
-        return customModels + predefinedModels.map { applyConfigDefaults(it) }
+        return scanCustomModels()
     }
 
     // Load config.json shipped inside the model's downloaded files, keeping
@@ -540,336 +651,6 @@ class ModelRepository private constructor(private val context: Context) {
     private fun applyConfigDefaults(model: Model): Model {
         val config = ModelConfig.read(File(Model.getModelsDir(context), model.id)) ?: return model
         return model.copy(configDefaults = config.withFallback(model.configDefaults))
-    }
-
-    private fun isSdxlCapableSoc(soc: String): Boolean = soc in setOf("SM8750", "SM8750P", "SM8850", "SM8850P", "SM8845", "SM8650")
-
-    private fun createCyberRealisticV10Model(): Model {
-        val id = "cyber_realistic_v10"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/cyber_realistic_v10_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "CyberRealistic v10",
-            description = context.getString(R.string.cyberrealistic_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, a majestic cat sitting on a windowsill at sunset,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createCyberRealisticV10Dmd2Model(): Model {
-        val id = "cyber_realistic_v10_dmd2"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/cyber_realistic_v10_dmd2_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "CyberRealistic v10 DMD2",
-            description = context.getString(R.string.dmd2_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, a majestic cat sitting on a windowsill at sunset,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
-            ),
-            // steps/cfg/scheduler intentionally unset: the distilled model
-            // ships them in a config.json bundled inside the zip.
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createIllustriousV16Model(): Model {
-        val id = "illustrious_v16"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/illustrious_v16_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "Illustrious v16",
-            description = context.getString(R.string.illustriousv16_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "1girl, solo, blue twintails, very long hair, bangs, blue eyes, jewelry, necklace, hair bow, off-shoulder white frilled dress, bare shoulders, collarbone, underwater, floating hair, reaching towards viewer, air bubbles, blue theme, blurry foreground, masterpiece",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createIllustriousV16Dmd2Model(): Model {
-        val id = "illustrious_v16_dmd2"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/illustrious_v16_dmd2_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "Illustrious v16 DMD2",
-            description = context.getString(R.string.dmd2_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "1girl, solo, blue twintails, very long hair, bangs, blue eyes, jewelry, necklace, hair bow, off-shoulder white frilled dress, bare shoulders, collarbone, underwater, floating hair, reaching towards viewer, air bubbles, blue theme, blurry foreground, masterpiece",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createAnythingV5Model(): Model {
-        val id = "anythingv5"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/AnythingV5_qnn2.28_$suffix.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "Anything V5.0",
-            description = context.getString(R.string.anythingv5_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createAnythingV5ModelCPU(): Model {
-        val id = "anythingv5cpu"
-        val fileUri = "xororz/sd-mnn/resolve/main/AnythingV5.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "Anything V5.0",
-            description = context.getString(R.string.anythingv5_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = true,
-        )
-    }
-
-    private fun createQteaMixModel(): Model {
-        val id = "qteamix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/QteaMix_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "QteaMix",
-            description = context.getString(R.string.qteamix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "chibi, best quality, 1girl, solo, cute, pink hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-        )
-    }
-
-    private fun createQteaMixModelCPU(): Model {
-        val id = "qteamixcpu"
-        val fileUri = "xororz/sd-mnn/resolve/main/QteaMix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "QteaMix",
-            description = context.getString(R.string.qteamix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "chibi, best quality, 1girl, solo, cute, pink hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = true,
-        )
-    }
-
-    private fun createCuteYukiMixModel(): Model {
-        val id = "cuteyukimix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/CuteYukiMix_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "CuteYukiMix",
-            description = context.getString(R.string.cuteyukimix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-        )
-    }
-
-    private fun createCuteYukiMixModelCPU(): Model {
-        val id = "cuteyukimixcpu"
-        val fileUri = "xororz/sd-mnn/resolve/main/CuteYukiMix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "CuteYukiMix",
-            description = context.getString(R.string.cuteyukimix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = true,
-        )
-    }
-
-    private fun createAbsoluteRealityModel(): Model {
-        val id = "absolutereality"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/AbsoluteReality_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "Absolute Reality",
-            description = context.getString(R.string.absolutereality_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, ultra-detailed, realistic, 8k, a cat on grass,",
-                negativePrompt = "worst quality, low quality, normal quality, poorly drawn, lowres, low resolution, signature, watermarks, ugly, out of focus, error, blurry, unclear photo, bad photo, unrealistic, semi realistic, pixelated, cartoon, anime, cgi, drawing, 2d, 3d, censored, duplicate,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createAbsoluteRealityModelCPU(): Model {
-        val id = "absoluterealitycpu"
-        val fileUri = "xororz/sd-mnn/resolve/main/AbsoluteReality.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "Absolute Reality",
-            description = context.getString(R.string.absolutereality_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, ultra-detailed, realistic, 8k, a cat on grass,",
-                negativePrompt = "worst quality, low quality, normal quality, poorly drawn, lowres, low resolution, signature, watermarks, ugly, out of focus, error, blurry, unclear photo, bad photo, unrealistic, semi realistic, pixelated, cartoon, anime, cgi, drawing, 2d, 3d, censored, duplicate,",
-            ),
-            runOnCpu = true,
-        )
-    }
-
-    private fun createChilloutMixModel(): Model {
-        val id = "chilloutmix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/ChilloutMix_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "ChilloutMix",
-            description = context.getString(R.string.chilloutmix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "RAW photo, best quality, realistic, photo-realistic, masterpiece, 1girl, upper body, facing front, portrait, white shirt",
-                negativePrompt = "paintings, cartoon, anime, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, skin spots, acnes, skin blemishes",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createChilloutMixModelCPU(): Model {
-        val id = "chilloutmixcpu"
-        val fileUri = "xororz/sd-mnn/resolve/main/ChilloutMix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "ChilloutMix",
-            description = context.getString(R.string.chilloutmix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "RAW photo, best quality, realistic, photo-realistic, masterpiece, 1girl, upper body, facing front, portrait, white shirt",
-                negativePrompt = "paintings, cartoon, anime, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, skin spots, acnes, skin blemishes",
-            ),
-            runOnCpu = true,
-        )
     }
 
     suspend fun refreshModelState(modelId: String) {

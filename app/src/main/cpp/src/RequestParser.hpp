@@ -22,6 +22,7 @@
 // ultrafix (tiled img2img) validation.
 inline GenerationRequest parseGenerationRequest(const nlohmann::json &json,
                                                 bool sdxl, bool anima,
+                                                bool zimage,
                                                 bool img2img_available,
                                                 bool ultrafix_supported) {
   GenerationRequest req;
@@ -75,12 +76,27 @@ inline GenerationRequest parseGenerationRequest(const nlohmann::json &json,
     req.show_diffusion_process = false;
   }
 
-  // SDXL and Anima both run fixed-1024 graphs; force the canvas regardless of
+  // SDXL, Anima and Z-Image all run fixed-1024 graphs; force the canvas regardless of
   // what the client sent so a stale/wrong size can't reach the QNN graphs.
   // (Anima has no ultrafix path, so the !ultrafix guard is moot there.)
-  if ((sdxl || anima) && !req.ultrafix) {
-    req.width = 1024;
-    req.height = 1024;
+  if ((sdxl || anima || zimage) && !req.ultrafix) {
+    // 🔴 2026-09-03（#86）：Z-Image 现在支持多个**已交付的**固定尺寸。
+    // 仍然「不信客户端」——只放行 zimage_sizes 里列出的；其余一律回落到画布尺寸，
+    // 这样一个过期的 UI 偏好或远程控制器仍然不可能把非法形状送进 QNN 图。
+    if (zimage && zimageSizeSupported(req.width, req.height)) {
+      // 保持客户端请求的尺寸
+    } else {
+      req.width = zimage ? zimage_canvas_size : 1024;
+      req.height = zimage ? zimage_canvas_size : 1024;
+    }
+  }
+  // Z-Image Turbo is a distilled, CFG-free profile.  Do not let saved UI
+  // preferences (or a remote controller) silently turn it into a different
+  // sampler configuration than the QNN graphs were converted for.
+  if (zimage) {
+    req.steps = zimage_turbo_steps;
+    req.cfg = 0.0f;
+    req.scheduler_type = "zimage_flowmatch";
   }
   req.denoise_strength = json.value("denoise_strength", 0.6f);
 
@@ -92,10 +108,11 @@ inline GenerationRequest parseGenerationRequest(const nlohmann::json &json,
 
   const int sample_w = req.width / 8;
   const int sample_h = req.height / 8;
-  // Latent channel count of the target format: SD/SDXL = 4, Anima = 16. The
+  // Latent channel count of the target format: SD/SDXL = 4, Anima/Z-Image = 16. The
   // latent-space inpaint mask is replicated across every channel, so it must be
   // sized to match (Pipeline reads it as {1, latent_ch, h, w}).
-  const int latent_ch = anima ? anima_latent_channels : 4;
+  const int latent_ch = anima ? anima_latent_channels
+                              : (zimage ? zimage_latent_channels : 4);
 
   // --- Fixed-1024 aspect ratio: parse target dims first ------------------
   // SDXL and Anima both render on a fixed 1024 canvas and reach non-1:1

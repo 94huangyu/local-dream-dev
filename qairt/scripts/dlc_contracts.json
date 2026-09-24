@@ -1,0 +1,543 @@
+{
+  "text_encoder_part1": {
+    "inputs": {
+      "input_ids": {
+        "dlc_dtype": "Int_32",
+        "shape": [
+          1,
+          20
+        ],
+        "elems": 20,
+        "host_bytes": 80
+      },
+      "attention_mask": {
+        "dlc_dtype": "Int_32",
+        "shape": [
+          1,
+          20
+        ],
+        "elems": 20,
+        "host_bytes": 80
+      }
+    },
+    "outputs": {
+      "add_2452": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          20,
+          2560
+        ],
+        "elems": 51200,
+        "host_bytes": 204800
+      }
+    }
+  },
+  "text_encoder_part2": {
+    "inputs": {
+      "attention_mask": {
+        "dlc_dtype": "Int_32",
+        "shape": [
+          1,
+          20
+        ],
+        "elems": 20,
+        "host_bytes": 80
+      },
+      "add_2452": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          20,
+          2560
+        ],
+        "elems": 51200,
+        "host_bytes": 204800
+      }
+    },
+    "outputs": {
+      "add_4828": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          20,
+          2560
+        ],
+        "elems": 51200,
+        "host_bytes": 204800
+      }
+    }
+  },
+  "text_encoder_part3": {
+    "inputs": {
+      "attention_mask": {
+        "dlc_dtype": "Int_32",
+        "shape": [
+          1,
+          20
+        ],
+        "elems": 20,
+        "host_bytes": 80
+      },
+      "add_4828": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          20,
+          2560
+        ],
+        "elems": 51200,
+        "host_bytes": 204800
+      }
+    },
+    "outputs": {
+      "add_7204": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          20,
+          2560
+        ],
+        "elems": 51200,
+        "host_bytes": 204800
+      }
+    }
+  },
+  "text_encoder_part4": {
+    "inputs": {
+      "attention_mask": {
+        "dlc_dtype": "Int_32",
+        "shape": [
+          1,
+          20
+        ],
+        "elems": 20,
+        "host_bytes": 80
+      },
+      "add_7204": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          20,
+          2560
+        ],
+        "elems": 51200,
+        "host_bytes": 204800
+      }
+    },
+    "outputs": {
+      "caption": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          32,
+          2560
+        ],
+        "elems": 81920,
+        "host_bytes": 327680
+      }
+    }
+  },
+  "transformer_part1a": {
+    "inputs": {
+      "latents": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "elems": 262144,
+        "host_bytes": 1048576
+      },
+      "caption": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          32,
+          2560
+        ],
+        "elems": 81920,
+        "host_bytes": 327680
+      },
+      "timestep": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1
+        ],
+        "elems": 1,
+        "host_bytes": 4
+      },
+      "cap_pad_mask": {
+        "dlc_dtype": "Bool_8",
+        "shape": [
+          1,
+          32
+        ],
+        "elems": 32,
+        "host_bytes": 128
+      }
+    },
+    "outputs": {
+      "adaln_input": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          256
+        ],
+        "elems": 256,
+        "host_bytes": 1024
+      },
+      "unified_freqs": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          64,
+          2
+        ],
+        "elems": 528384,
+        "host_bytes": 2113536
+      },
+      "select_45": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          1,
+          64
+        ],
+        "elems": 264192,
+        "host_bytes": 1056768
+      },
+      "select_46": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          1,
+          64
+        ],
+        "elems": 264192,
+        "host_bytes": 1056768
+      },
+      "tanh_19": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          3840
+        ],
+        "elems": 3840,
+        "host_bytes": 15360
+      },
+      "add_131": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          3840
+        ],
+        "elems": 3840,
+        "host_bytes": 15360
+      },
+      "add_138": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          3840
+        ],
+        "elems": 15851520,
+        "host_bytes": 63406080
+      },
+      "latents_shape": {
+        "dlc_dtype": "Int_32",
+        "shape": [
+          3
+        ],
+        "elems": 3,
+        "host_bytes": 12
+      },
+      "unified_mask": {
+        "dlc_dtype": "Bool_8",
+        "shape": [
+          1,
+          4128
+        ],
+        "elems": 4128,
+        "host_bytes": 16512
+      }
+    }
+  },
+  "transformer_part1b": {
+    "inputs": {
+      "add_138": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          3840
+        ],
+        "elems": 15851520,
+        "host_bytes": 63406080
+      },
+      "add_131": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          3840
+        ],
+        "elems": 3840,
+        "host_bytes": 15360
+      },
+      "tanh_19": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          3840
+        ],
+        "elems": 3840,
+        "host_bytes": 15360
+      },
+      "adaln_input": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          256
+        ],
+        "elems": 256,
+        "host_bytes": 1024
+      },
+      "select_45": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          1,
+          64
+        ],
+        "elems": 264192,
+        "host_bytes": 1056768
+      },
+      "select_46": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          1,
+          64
+        ],
+        "elems": 264192,
+        "host_bytes": 1056768
+      }
+    },
+    "outputs": {
+      "unified": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          3840
+        ],
+        "elems": 15851520,
+        "host_bytes": 63406080
+      }
+    }
+  },
+  "transformer_part2": {
+    "inputs": {
+      "adaln_input": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          256
+        ],
+        "elems": 256,
+        "host_bytes": 1024
+      },
+      "unified": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          3840
+        ],
+        "elems": 15851520,
+        "host_bytes": 63406080
+      },
+      "unified_freqs": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          64,
+          2
+        ],
+        "elems": 528384,
+        "host_bytes": 2113536
+      },
+      "unified_mask": {
+        "dlc_dtype": "Bool_8",
+        "shape": [
+          1,
+          4128
+        ],
+        "elems": 4128,
+        "host_bytes": 16512
+      }
+    },
+    "outputs": {
+      "latents": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "elems": 262144,
+        "host_bytes": 1048576
+      }
+    }
+  },
+  "vae_decoder": {
+    "inputs": {
+      "vae_latents": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "elems": 262144,
+        "host_bytes": 1048576
+      }
+    },
+    "outputs": {
+      "pixels": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          3,
+          1024,
+          1024
+        ],
+        "elems": 3145728,
+        "host_bytes": 12582912
+      }
+    }
+  },
+  "transformer_part2a": {
+    "inputs": {
+      "adaln_input": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          256
+        ],
+        "elems": 256,
+        "host_bytes": 1024
+      },
+      "unified": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          3840
+        ],
+        "elems": 15851520,
+        "host_bytes": 63406080
+      },
+      "unified_freqs": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          64,
+          2
+        ],
+        "elems": 528384,
+        "host_bytes": 2113536
+      },
+      "unified_mask": {
+        "dlc_dtype": "Bool_8",
+        "shape": [
+          1,
+          4128
+        ],
+        "elems": 4128,
+        "host_bytes": 16512
+      }
+    },
+    "outputs": {
+      "select": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          1,
+          64
+        ],
+        "elems": 264192,
+        "host_bytes": 1056768
+      },
+      "select_1": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          1,
+          64
+        ],
+        "elems": 264192,
+        "host_bytes": 1056768
+      },
+      "val_105": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          1,
+          4128
+        ],
+        "elems": 4128,
+        "host_bytes": 16512
+      },
+      "split_7_split_2": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          3840
+        ],
+        "elems": 3840,
+        "host_bytes": 15360
+      },
+      "split_7_split_3": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          1,
+          3840
+        ],
+        "elems": 3840,
+        "host_bytes": 15360
+      },
+      "add_92": {
+        "dlc_dtype": "uFxp_16",
+        "shape": [
+          1,
+          4128,
+          3840
+        ],
+        "elems": 15851520,
+        "host_bytes": 63406080
+      }
+    }
+  }
+}

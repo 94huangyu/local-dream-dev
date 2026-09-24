@@ -144,6 +144,8 @@ import io.github.xororz.localdream.data.TagAutocompleteRepository
 import io.github.xororz.localdream.data.TagMatchType
 import io.github.xororz.localdream.data.TagSuggestion
 import io.github.xororz.localdream.data.UpscalerRepository
+import io.github.xororz.localdream.data.isZImageDeliveredSize
+import io.github.xororz.localdream.data.zimageDeliveredSizes
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.BackgroundGenerationService
 import io.github.xororz.localdream.service.BackgroundGenerationService.GenerationState
@@ -395,7 +397,11 @@ fun ModelRunScreen(
     // would hit SharedPreferences in the hottest path of this composable.
     // In remote mode the img2img capability is the host's, not this device's.
     val localUseImg2img = remember { preferences.getBoolean("use_img2img", true) }
-    val useImg2img = if (isRemote) remoteRepository.useImg2img else localUseImg2img
+    // Z-Image Turbo is deliberately text-to-image only.  The host/local
+    // preference describes whether an encoder is available in general, but
+    // must never expose an img2img route for this particular model.
+    val useImg2img = (if (isRemote) remoteRepository.useImg2img else localUseImg2img) &&
+        model?.isZImage != true
     val enableTagAutocomplete = remember { preferences.getBoolean("enable_tag_autocomplete", true) }
     val tagSuggestionCount = 128
     val tagAutocompleteRepository = remember { TagAutocompleteRepository.getInstance(context) }
@@ -1223,6 +1229,13 @@ fun ModelRunScreen(
                 (listOf(baseResolution) + patchResolutions).distinctBy { "${it.width}x${it.height}" }
             availableResolutions = allResolutions
         }
+        // Z-Image 走的不是「补丁分辨率」那套：它的每个尺寸对应交付里一整套 QNN 图
+        // （台账 #86），清单来自 zimageDeliveredSizes。usesFixedCanvas 仍为 true，
+        // 所以 aspectRatio 保持 "1:1"、computeAspectTargetSize 返回 null，不会再叠一层
+        // 信箱裁切 —— 尺寸就是真实生成尺寸。
+        if (model?.isZImage == true) {
+            availableResolutions = zimageDeliveredSizes
+        }
     }
 
     LaunchedEffect(modelId, model) {
@@ -1236,8 +1249,16 @@ fun ModelRunScreen(
                 if (isFirstRun) defaults.negativePrompt else prefs.negativePrompt,
             )
 
-            steps = if (isFirstRun) defaults.steps else prefs.steps
-            cfg = if (isFirstRun) defaults.cfg else prefs.cfg
+            // Z-Image Turbo's 8-step / CFG-0 profile is enforced natively
+            // (RequestParser.hpp overrides whatever the client sends, and
+            // PipelineZImage rejects anything else).  A saved preference from
+            // before that enforcement existed would otherwise be *displayed*
+            // and written into history as if it were what ran - it isn't.
+            // Model.codeDefaults already declares 8/0 for this model; honour it
+            // over stale prefs, matching the intent stated there.
+            val pinnedProfile = model.isZImage
+            steps = if (isFirstRun || pinnedProfile) defaults.steps else prefs.steps
+            cfg = if (isFirstRun || pinnedProfile) defaults.cfg else prefs.cfg
             seed = prefs.seed
             denoiseStrength = prefs.denoiseStrength
             useOpenCL = prefs.useOpenCL
@@ -1247,12 +1268,17 @@ fun ModelRunScreen(
             // non-1:1 ratio would silently fall back to 1024x1024 anyway.
             aspectRatio = if (useImg2img) prefs.aspectRatio else "1:1"
 
+            // Z-Image 可以记住一个**已交付的**非 1:1 尺寸；没存过或存的是已经下线的
+            // 尺寸，一律回到 1024 见方（#86）。其余 fixed-canvas 模型仍然锁死 1024。
+            val zimageSaved = model.isZImage && isZImageDeliveredSize(prefs.width, prefs.height)
             currentWidth = when {
+                zimageSaved -> prefs.width
                 model.usesFixedCanvas -> 1024
                 prefs.width == -1 -> defaultGenerationSize(usesFixedCanvas = false, runOnCpu = model.runOnCpu)
                 else -> prefs.width
             }
             currentHeight = when {
+                zimageSaved -> prefs.height
                 model.usesFixedCanvas -> 1024
                 prefs.height == -1 -> defaultGenerationSize(usesFixedCanvas = false, runOnCpu = model.runOnCpu)
                 else -> prefs.height
@@ -1414,6 +1440,22 @@ fun ModelRunScreen(
                     // forwarded to both the snapshot and the currently-displayed marker
                     // so handleSaveImage can later confirm the user is still looking at
                     // this generation (and not a different history thumbnail).
+                    // 2026-08-26 (ledger #126): claim this Complete before
+                    // writing. Every live ModelRunScreen composition in the
+                    // process sees the same global Complete; without this gate
+                    // each one wrote its own row (device-measured: 2 rows per
+                    // generation with 2 compositions alive, 1 row with 1).
+                    // Gating only the DB write -- not the whole branch -- so a
+                    // second composition still refreshes its own UI, it just
+                    // does not duplicate history.
+                    //
+                    // The claim is taken HERE, on the main thread, in the same
+                    // synchronous step that launches the save. Claiming inside
+                    // the IO coroutine instead would open a window where the
+                    // claim is taken and the coroutine is then cancelled before
+                    // the insert, losing the row entirely while every other
+                    // consumer is already locked out.
+                    if (BackgroundGenerationService.claimComplete(state)) {
                     coroutineScope.launch(Dispatchers.IO) {
                         val savedItem = historyManager.saveGeneratedImage(
                             modelId = modelId,
@@ -1431,6 +1473,7 @@ fun ModelRunScreen(
                                 currentDisplayedHistoryId = savedItem.id
                             }
                         }
+                    }
                     }
 
                     currentBitmap = state.bitmap
@@ -1457,14 +1500,25 @@ fun ModelRunScreen(
 
                     generationStartTime = null
 
+                    // 2026-08-26 (ledger #126, second symptom): the pager used
+                    // to stop between pages. markBitmapConsumed() sat in the
+                    // animation's finally block, so a *second* consumer taking
+                    // the else branch called it immediately (device-measured 3ms
+                    // after the first consumer started animating, vs 384ms for a
+                    // full animation); the service then stopped, state went back
+                    // to Idle, LaunchedEffect(serviceState) restarted, and the
+                    // in-flight animation coroutine was cancelled mid-scroll.
+                    // Consuming first and animating in the composition's own
+                    // scope makes the animation independent of this effect's
+                    // lifetime.
+                    BackgroundGenerationService.markBitmapConsumed()
                     if (pagerState.currentPage == 0 && !showAdvancedSettings) {
-                        try {
-                            pagerState.animateScrollToPage(1)
-                        } finally {
-                            BackgroundGenerationService.markBitmapConsumed()
+                        coroutineScope.launch {
+                            try {
+                                pagerState.animateScrollToPage(1)
+                            } catch (_: kotlinx.coroutines.CancellationException) {
+                            }
                         }
-                    } else {
-                        BackgroundGenerationService.markBitmapConsumed()
                     }
                 }
             }
@@ -1582,6 +1636,20 @@ fun ModelRunScreen(
                             }
                         }
                         backendRestartTrigger++
+                    } else if (model?.isZImage == true) {
+                        // 🔴 Z-Image 换尺寸**不需要重启后端**（台账 #86）：
+                        //   · 后端进程不接收 --width/--height，那两个 extra 只对
+                        //     sd15npu 的分辨率补丁有意义；
+                        //   · 每个尺寸对应的 QNN 图是在 generate() 里按请求现取的
+                        //     （PipelineZImage 按 size_key 切契约），进程本身与尺寸无关；
+                        //   · RequestParser 已放行全部已交付尺寸，尺寸不合法会硬失败。
+                        // 收益是实打实的：新契约下后端每次启动要现算 12.3 GiB 的 sha256
+                        // ≈ **205 秒**。逐个试 5 个尺寸原本要多付 4 次重启 ≈ 14 分钟。
+                        android.util.Log.d(
+                            "ModelRunScreen",
+                            "Z-Image resolution -> ${resolution.width}x${resolution.height}, " +
+                                "backend restart skipped (graphs are picked per request)",
+                        )
                     } else {
                         model?.let { m ->
                             val serviceIntent =
@@ -1796,7 +1864,8 @@ fun ModelRunScreen(
                             }
                             if (showAdvancedSettings) {
                                 AdvancedSettingsDialog(
-                                    isSdxl = model?.usesFixedCanvas == true,
+                                    usesFixedCanvas = model?.usesFixedCanvas == true,
+                                    isZImage = model?.isZImage == true,
                                     runOnCpu = model?.runOnCpu ?: false,
                                     useImg2img = useImg2img,
                                     isRunning = isRunning,
@@ -1905,6 +1974,19 @@ fun ModelRunScreen(
                             }
                         }
 
+                        // 🔴 Z-Image Turbo 固定 CFG=0，**没有 classifier-free guidance**
+                        //    ⇒ 负面提示词在数学上无处可用：`PipelineZImage.hpp` 全文件
+                        //    不引用 `negative_prompt`（它走自己的 generate()，不经过
+                        //    Pipeline.hpp 里处理负面提示词的那段）。
+                        //    留着输入框比"浪费空间"更糟 —— 用户填了完全不起作用，是误导。
+                        //    ⊕ 数据层的 `negativePrompt` 字段**故意保留**（67 处 / 20 个文件，
+                        //      含远程协议、PNG 元数据、参数分享）：删它对界面没有任何可见收益，
+                        //      等真要做纯 Z-Image 专用 app 时再一并清理。
+                        //    ⚠️ 将来接入第二个"不需要负面提示词"的模型（如 Flux.2 Klein）时，
+                        //      **不要再加一个 `isXxx` 判断** —— 改成模型配置里的能力标志
+                        //      （如 `supportsNegativePrompt`）。本文件的 `isSdxl` 名实不符
+                        //      就是这么来的，2026-09-04 因此漏掉了 Z-Image 的分辨率选择器。
+                        val showNegativePrompt = model?.isZImage != true
                         ControlledPromptTagTextField(
                             controller = promptField,
                             autocompleteAvailable = tagAutocompleteAvailable,
@@ -1917,21 +1999,26 @@ fun ModelRunScreen(
                                     showCount = promptField.text.isNotEmpty(),
                                 )
                             },
+                            // 负面框隐藏时，把空出来的两行让给正向提示词
+                            minCollapsedLines = if (showNegativePrompt) 2 else 4,
+                            maxCollapsedLines = if (showNegativePrompt) 2 else 4,
                         )
 
-                        ControlledPromptTagTextField(
-                            controller = negativePromptField,
-                            autocompleteAvailable = tagAutocompleteAvailable,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = {
-                                PromptCountLabel(
-                                    label = stringResource(R.string.negative_prompt),
-                                    count = negativePromptField.tokenCount,
-                                    max = negativePromptField.tokenMax,
-                                    showCount = negativePromptField.text.isNotEmpty(),
-                                )
-                            },
-                        )
+                        if (showNegativePrompt) {
+                            ControlledPromptTagTextField(
+                                controller = negativePromptField,
+                                autocompleteAvailable = tagAutocompleteAvailable,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = {
+                                    PromptCountLabel(
+                                        label = stringResource(R.string.negative_prompt),
+                                        count = negativePromptField.tokenCount,
+                                        max = negativePromptField.tokenMax,
+                                        showCount = negativePromptField.text.isNotEmpty(),
+                                    )
+                                },
+                            )
+                        }
 
                         Button(
                             onClick = {

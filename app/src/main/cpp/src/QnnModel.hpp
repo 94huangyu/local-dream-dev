@@ -9,9 +9,11 @@
 #include <Config.hpp>
 #include <QnnSampleApp.hpp>
 #include <QnnTypeMacros.hpp>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "DataUtil.hpp"
@@ -22,6 +24,27 @@ using namespace qnn::tools::sample_app;
 
 class QnnModel : public QnnSampleApp {
  public:
+  // Generic named-IO contract used by new QNN formats. The caller owns input
+  // memory for the duration of executeNamedGraph; outputs are copied out so a
+  // later graph invocation cannot overwrite them. This deliberately avoids
+  // assuming Anima's sample/context/hidden tensor names.
+  struct NamedTensorView {
+    std::string name;
+    const void *data = nullptr;
+    size_t byte_count = 0;
+  };
+  struct NamedTensorValue {
+    std::string name;
+    std::vector<uint8_t> bytes;
+  };
+  // H5（P2 生图速度）：把一次段执行的墙钟拆成「拷入 / graphExecute / 拷出」。
+  // 目的是回答"122.7 s 步循环里有多少不是算力"——D1 只能从加速器周期反推出
+  // 「part1a 41.2% 非算力」，那是②推导；这里是①实测。默认 nullptr ⇒ 其它
+  // pipeline（Anima/SDXL/SD15）的三参数调用完全不受影响。
+  struct ExecSplit {
+    long long in_us = 0, exec_us = 0, out_us = 0;
+  };
+
   Qnn_Tensor_t *inputs = nullptr;
   Qnn_Tensor_t *outputs = nullptr;
   void *m_modelHandle = nullptr;
@@ -40,6 +63,75 @@ class QnnModel : public QnnSampleApp {
                      backendHandle, outputPath, debug, outputDataType,
                      inputDataType, profilingLevel, dumpOutputs,
                      cachedBinaryPath, saveBinaryName) {}
+
+  // Executes graph 0 only when every declared input is supplied by name and
+  // has the exact client-buffer byte size. This turns a stale ONNX/QNN
+  // manifest into an immediate actionable error instead of an unsafe memcpy.
+  StatusCode executeNamedGraph(const char *tag,
+                               const std::vector<NamedTensorView> &named_inputs,
+                               std::vector<NamedTensorValue> &named_outputs,
+                               ExecSplit *split = nullptr) {
+    const auto t_us = [] {
+      return std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+          .count();
+    };
+    if (!ensureIoTensors()) return StatusCode::FAILURE;
+    const auto graphInfo = (*m_graphsInfo)[m_activeGraphIdx];
+
+    if (named_inputs.size() != graphInfo.numInputTensors) {
+      QNN_ERROR("%s: graph expects %u inputs, received %zu", tag,
+                graphInfo.numInputTensors, named_inputs.size());
+      return StatusCode::FAILURE;
+    }
+
+    const long long t_in0 = split ? t_us() : 0;
+    for (uint32_t i = 0; i < graphInfo.numInputTensors; ++i) {
+      Qnn_Tensor_t &tensor = inputs[i];
+      const char *tensor_name = QNN_TENSOR_GET_NAME(tensor);
+      const NamedTensorView *provided = nullptr;
+      for (const auto &candidate : named_inputs) {
+        if (tensor_name && candidate.name == tensor_name) {
+          provided = &candidate;
+          break;
+        }
+      }
+      if (!provided || !provided->data) {
+        QNN_ERROR("%s: missing input tensor '%s'", tag,
+                  tensor_name ? tensor_name : "<unnamed>");
+        return StatusCode::FAILURE;
+      }
+      const size_t expected = QNN_TENSOR_GET_CLIENT_BUF(tensor).dataSize;
+      if (provided->byte_count != expected) {
+        QNN_ERROR("%s: input '%s' has %zu bytes, expected %zu", tag,
+                  tensor_name, provided->byte_count, expected);
+        return StatusCode::FAILURE;
+      }
+      memcpy(QNN_TENSOR_GET_CLIENT_BUF(tensor).data, provided->data, expected);
+    }
+
+    const long long t_exec0 = split ? t_us() : 0;
+    if (!runGraph(graphInfo, tag)) return StatusCode::FAILURE;
+    const long long t_out0 = split ? t_us() : 0;
+
+    named_outputs.clear();
+    named_outputs.reserve(graphInfo.numOutputTensors);
+    for (uint32_t i = 0; i < graphInfo.numOutputTensors; ++i) {
+      const Qnn_Tensor_t &tensor = outputs[i];
+      const size_t bytes = QNN_TENSOR_GET_CLIENT_BUF(tensor).dataSize;
+      NamedTensorValue value;
+      value.name = QNN_TENSOR_GET_NAME(tensor);
+      value.bytes.resize(bytes);
+      memcpy(value.bytes.data(), QNN_TENSOR_GET_CLIENT_BUF(tensor).data, bytes);
+      named_outputs.push_back(std::move(value));
+    }
+    if (split) {
+      split->in_us += t_exec0 - t_in0;
+      split->exec_us += t_out0 - t_exec0;
+      split->out_us += t_us() - t_out0;
+    }
+    return StatusCode::SUCCESS;
+  }
 
   // --- HTP spill-fill buffer sharing across contexts (group registration) ---
   // When enabled, this context joins a group that shares a single HTP
@@ -61,10 +153,54 @@ class QnnModel : public QnnSampleApp {
     m_sfHtpConfig.groupRegistration.maxSpillFillBuffer = maxBytes;
     m_sfCtxConfig.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     m_sfCtxConfig.customConfig = &m_sfHtpConfig;
+    m_sfConfigActive = true;
     m_sfCtxConfigPtrs[0] = &m_sfCtxConfig;
     m_sfCtxConfigPtrs[1] = nullptr;
     // Consumed by QnnSampleApp::createFromBinary / QnnModel::createFromBuffer.
-    m_contextConfig = m_sfCtxConfigPtrs;
+    // (2026-09-02) assembled together with ENABLE_GRAPHS, see rebuildContextConfig().
+    rebuildContextConfig();
+  }
+
+  // --- Multi-graph context: enable & select exactly one graph (ledger #86) ---
+  // A context binary may hold several graphs that share weights (e.g. one per
+  // aspect ratio). Two facts, both measured on device 2026-09-02:
+  //   1. Without QNN_CONTEXT_CONFIG_ENABLE_GRAPHS the whole binary is
+  //      deserialized and createFromBinary fails with 0x3ea (unsigned-PD
+  //      capacity, ledger #57) -- so this is REQUIRED, not an optimization.
+  //   2. graphRetrieve() returns QNN_SUCCESS even for graphs that were NOT
+  //      enabled, so its return code must never be used to decide usability.
+  //      The graph is instead selected BY NAME below.
+  // Must be called BEFORE initialize()/createFromBinary().
+  // When never called, m_activeGraphIdx stays 0 and behaviour is unchanged.
+  void setEnabledGraph(const char *graphName) {
+    if (graphName == nullptr || *graphName == '\0') return;
+    m_enabledGraphName = graphName;
+    m_egNames[0] = m_enabledGraphName.c_str();
+    m_egNames[1] = nullptr;
+    m_egCtxConfig.option = QNN_CONTEXT_CONFIG_ENABLE_GRAPHS;
+    m_egCtxConfig.enableGraphs = m_egNames;
+    m_egConfigActive = true;
+    rebuildContextConfig();
+  }
+
+  // Assembles m_contextConfig from whichever optional configs are active.
+  //
+  // 🔴🔴 2026-09-04 事故根因：这里原本用 `option` 的值判断「这个配置设过了没有」——
+  //   `if (m_sfCtxConfig.option == QNN_CONTEXT_CONFIG_OPTION_CUSTOM)`。
+  //   而 QnnContext.h:99 里 **`QNN_CONTEXT_CONFIG_OPTION_CUSTOM == 0`**，
+  //   `QnnContext_Config_t m_sfCtxConfig{}` 又把 option 零初始化 ⇒ **该判断恒为真**。
+  //   于是只要 setEnabledGraph() 被调用过，就会把一个 `customConfig == nullptr` 的
+  //   spill-fill 配置一起交给 contextCreateFromBinary ⇒ HTP 解引用空指针 ⇒
+  //   设备上 SIGSEGV（tombstone: SEGV_MAPERR, fault addr 0x0, #00~#03 在 libQnnHtp.so）。
+  //   现网 1:1 也受影响，因为交付契约里四个 transformer 段本来就带 qnn_graph_name。
+  // ⇒ **「设过没有」必须用独立的布尔位表示，不得借用带 0 值的枚举当哨兵。**
+  //   （约束 8：判据里涉及具体数值编码的，定稿前必须先验证该编码本身成立。）
+  void rebuildContextConfig() {
+    size_t k = 0;
+    if (m_sfConfigActive) m_ctxCfgPtrs[k++] = &m_sfCtxConfig;
+    if (m_egConfigActive) m_ctxCfgPtrs[k++] = &m_egCtxConfig;
+    m_ctxCfgPtrs[k] = nullptr;
+    m_contextConfig = (k > 0) ? m_ctxCfgPtrs : nullptr;
   }
 
   // Valid only after a successful initialize()/createFromBinary(): the QNN
@@ -100,8 +236,8 @@ class QnnModel : public QnnSampleApp {
     if ((inputs != nullptr || outputs != nullptr) && m_graphsInfo != nullptr &&
         m_graphsCount > 0) {
       m_ioTensor.tearDownInputAndOutputTensors(
-          inputs, outputs, (*m_graphsInfo)[0].numInputTensors,
-          (*m_graphsInfo)[0].numOutputTensors);
+          inputs, outputs, (*m_graphsInfo)[m_activeGraphIdx].numInputTensors,
+          (*m_graphsInfo)[m_activeGraphIdx].numOutputTensors);
     }
     inputs = nullptr;
     outputs = nullptr;
@@ -664,7 +800,7 @@ class QnnModel : public QnnSampleApp {
     if (inputs != nullptr && outputs != nullptr) return true;
     if (qnn::tools::iotensor::StatusCode::SUCCESS !=
         m_ioTensor.setupInputAndOutputTensors(&inputs, &outputs,
-                                              (*m_graphsInfo)[0])) {
+                                              (*m_graphsInfo)[m_activeGraphIdx])) {
       QNN_ERROR("Error setting up Input/Output tensors");
       return false;
     }
@@ -1020,6 +1156,27 @@ class QnnModel : public QnnSampleApp {
     m_qnnFunctionPointers.qnnSystemInterface.systemContextFree(sysCtxHandle);
     sysCtxHandle = nullptr;
 
+    // Resolve the enabled graph name to an index. Doing it by name is the only
+    // safe way: graphRetrieve() succeeds even for graphs that were not
+    // deserialized (measured on device, ledger #86), so an index-based guess
+    // would silently execute a graph that is not resident.
+    if (StatusCode::SUCCESS == returnStatus && !m_enabledGraphName.empty()) {
+      bool found = false;
+      for (size_t i = 0; i < m_graphsCount; ++i) {
+        const char *gn = (*m_graphsInfo)[i].graphName;
+        if (gn != nullptr && m_enabledGraphName == gn) {
+          m_activeGraphIdx = i;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        QNN_ERROR("Enabled graph '%s' is not present in this context binary",
+                  m_enabledGraphName.c_str());
+        returnStatus = StatusCode::FAILURE;
+      }
+    }
+
     if (StatusCode::SUCCESS == returnStatus &&
         nullptr == m_qnnFunctionPointers.qnnInterface.contextCreateFromBinary) {
       QNN_ERROR("contextCreateFromBinaryFnHandle is nullptr.");
@@ -1036,7 +1193,7 @@ class QnnModel : public QnnSampleApp {
     }
 
     if (ProfilingLevel::OFF != m_profilingLevel) {
-      extractBackendProfilingInfo(m_profileBackendHandle);
+      extractBackendProfilingInfo(m_profileBackendHandle, nullptr);
     }
 
     m_isContextCreated = true;
@@ -1073,6 +1230,17 @@ class QnnModel : public QnnSampleApp {
   QnnHtpContext_CustomConfig_t m_sfHtpConfig{};
   QnnContext_Config_t m_sfCtxConfig{};
   QnnContext_Config_t *m_sfCtxConfigPtrs[2] = {nullptr, nullptr};
+  // --- multi-graph selection (ledger #86). Must outlive createFromBinary. ---
+  std::string m_enabledGraphName;
+  const char *m_egNames[2] = {nullptr, nullptr};
+  QnnContext_Config_t m_egCtxConfig{};
+  QnnContext_Config_t *m_ctxCfgPtrs[3] = {nullptr, nullptr, nullptr};
+  // 「该配置是否已设置」只能由这两个布尔位回答，见 rebuildContextConfig() 的说明。
+  bool m_sfConfigActive = false;
+  bool m_egConfigActive = false;
+  // Index into m_graphsInfo of the graph this model executes. 0 unless
+  // setEnabledGraph() named a different one.
+  size_t m_activeGraphIdx = 0;
 };
 
 #endif  // QNNMODEL_HPP

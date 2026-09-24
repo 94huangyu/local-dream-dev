@@ -103,15 +103,15 @@ diff --git a/3rdparty/SampleApp/src/QnnSampleApp.cpp b/3rdparty/SampleApp/src/Qn
 diff --git a/3rdparty/SampleApp/src/QnnSampleApp.hpp b/3rdparty/SampleApp/src/QnnSampleApp.hpp
 --- a/3rdparty/SampleApp/src/QnnSampleApp.hpp
 +++ b/3rdparty/SampleApp/src/QnnSampleApp.hpp
-@@ -82,7 +82,7 @@
+@@ -93,7 +93,7 @@
  
    StatusCode verifyFailReturnStatus(Qnn_ErrorHandle_t errCode);
  
 - private:
-+//  private:
-   StatusCode extractBackendProfilingInfo(Qnn_ProfileHandle_t profileHandle);
++ protected:
+   StatusCode extractBackendProfilingInfo(Qnn_ProfileHandle_t profileHandle,
+                                          QnnSystemProfile_ProfileData_t *profileData);
  
-   StatusCode extractProfilingSubEvents(QnnProfile_EventId_t profileEventId);
 diff --git a/3rdparty/SampleApp/src/Utils/IOTensor.cpp b/3rdparty/SampleApp/src/Utils/IOTensor.cpp
 --- a/3rdparty/SampleApp/src/Utils/IOTensor.cpp
 +++ b/3rdparty/SampleApp/src/Utils/IOTensor.cpp
@@ -178,7 +178,7 @@ diff --git a/3rdparty/SampleApp/src/Utils/IOTensor.hpp b/3rdparty/SampleApp/src/
                                             size_t numOutputTensors);
  
 - private:
-+//  private:
++ public:
    PopulateInputTensorsRetType_t populateInputTensor(const std::vector<std::string> &filePaths,
                                                      const size_t filePathsIndexOffset,
                                                      const bool loopBackToStart,

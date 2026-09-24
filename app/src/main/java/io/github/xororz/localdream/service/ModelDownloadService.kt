@@ -272,11 +272,14 @@ class ModelDownloadService : Service() {
             var entry = zis.nextEntry
 
             while (entry != null) {
-                if (!entry.isDirectory) {
-                    val fileName = entry.name.substringAfterLast('/')
-                    if (fileName.isNotEmpty() && !fileName.startsWith(".") && !fileName.startsWith("__MACOSX")) {
-                        val file = File(destDir, fileName)
+                val entryName = entry.name
+                if (entryName.isNotEmpty() && !entryName.contains("__MACOSX") && !entryName.split('/').any { it.startsWith(".") }) {
+                    val file = File(destDir, entryName)
 
+                    if (entry.isDirectory) {
+                        file.mkdirs()
+                    } else {
+                        file.parentFile?.mkdirs()
                         java.io.BufferedOutputStream(FileOutputStream(file)).use { output ->
                             zis.copyTo(output)
                         }

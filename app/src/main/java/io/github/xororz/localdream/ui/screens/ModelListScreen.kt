@@ -255,6 +255,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     val msgModelConversionSuccess = stringResource(R.string.model_conversion_success)
     val msgModelConversionFailed = stringResource(R.string.model_conversion_failed)
     val msgNpuModelAddedSuccess = stringResource(R.string.npu_model_added_success)
+    val msgNpuModelAddedSuccessVerify = stringResource(R.string.npu_model_added_success_verify)
     val msgNpuModelAddFailed = stringResource(R.string.npu_model_add_failed)
     val msgDeleteSuccess = stringResource(R.string.delete_success)
     val msgDeleteFailed = stringResource(R.string.delete_failed)
@@ -716,7 +717,17 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                             extractByteProgress = null
                             scope.launch {
                                 modelRepository.refreshAllModels()
-                                snackbarHostState.showSnackbar(msgNpuModelAddedSuccess)
+                                // 只有 Z-Image 的契约带逐文件 sha256，首次启动要校验约 12 GiB
+                                // （台账 #182：结果会被缓存，之后跳过）。其余 NPU 模型没有这一步，
+                                // 所以提示按模型类型区分，不能一律显示"要等 20 秒"。
+                                val zimageMarker = File(
+                                    File(File(context.filesDir, "models"), modelName.replace(" ", "")),
+                                    "ZIMAGE",
+                                )
+                                snackbarHostState.showSnackbar(
+                                    if (zimageMarker.exists()) msgNpuModelAddedSuccessVerify
+                                    else msgNpuModelAddedSuccess,
+                                )
                             }
                         },
                         onError = { error ->
@@ -3199,14 +3210,18 @@ suspend fun extractNpuModel(
                     var zipEntry = zipInputStream.nextEntry
 
                     while (zipEntry != null) {
-                        if (!zipEntry.isDirectory) {
-                            val fileName = zipEntry.name.substringAfterLast('/')
+                        val entryName = zipEntry.name
 
-                            if (fileName.isNotEmpty() &&
-                                !fileName.startsWith(".") &&
-                                !fileName.startsWith("__MACOSX")
-                            ) {
-                                val outputFile = File(modelDir, fileName)
+                        if (entryName.isNotEmpty() &&
+                            !entryName.contains("__MACOSX") &&
+                            !entryName.split('/').any { it.startsWith(".") }
+                        ) {
+                            val outputFile = File(modelDir, entryName)
+
+                            if (zipEntry.isDirectory) {
+                                outputFile.mkdirs()
+                            } else {
+                                outputFile.parentFile?.mkdirs()
 
                                 BufferedOutputStream(outputFile.outputStream()).use { outputStream ->
                                     val tracking = object : OutputStream() {
@@ -3214,6 +3229,7 @@ suspend fun extractNpuModel(
                                             outputStream.write(b)
                                             extractedBytesAtomic.incrementAndGet()
                                         }
+
                                         override fun write(b: ByteArray, off: Int, len: Int) {
                                             outputStream.write(b, off, len)
                                             extractedBytesAtomic.addAndGet(len.toLong())

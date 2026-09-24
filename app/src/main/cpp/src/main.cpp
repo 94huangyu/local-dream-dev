@@ -12,6 +12,7 @@
 #include "MnnUtils.hpp"
 #include "Pipeline.hpp"
 #include "PipelineAnima.hpp"
+#include "PipelineZImage.hpp"
 #include "PipelineSd15Cpu.hpp"
 #include "PipelineSd15Npu.hpp"
 #include "PipelineSdxl.hpp"
@@ -32,7 +33,7 @@
 #include "httplib.h"
 #include "json.hpp"
 
-// The server runs exactly one of three fixed model formats, selected by
+// The server runs exactly one fixed model format, selected by
 // --type. Each format implies the full file layout under --model_dir, the
 // diffusion backend (MNN vs QNN), and the CLIP pipeline; nothing else is
 // configurable per component.
@@ -46,10 +47,12 @@
 //   anima:   tokenizer.json tokenizer_t5.json token_emb.bin clip.bin
 //            unet_part1.bin unet_part2.bin vae_decoder.bin
 //            [vae_encoder.bin] (optional; enables img2img/inpaint)
+//   zimage:  tokenizer.json final_qnn_contract.json and the eight Context
+//            Binaries named by that contract.
 // SD15/SDXL CLIP runs on MNN (CPU); Anima's CLIP (clip.bin) runs on QNN/HTP
 // (the C++ side still does the qwen token_emb lookup -> input_embedding).
 struct ServerOptions {
-  enum class ModelType { kSd15Cpu, kSd15Npu, kSdxl, kAnima };
+  enum class ModelType { kSd15Cpu, kSd15Npu, kSdxl, kAnima, kZImage };
 
   int port = 8081;
   std::string listen_address = "127.0.0.1";
@@ -69,6 +72,7 @@ struct ServerOptions {
 
   bool isSdxl() const { return type == ModelType::kSdxl; }
   bool isAnima() const { return type == ModelType::kAnima; }
+  bool isZImage() const { return type == ModelType::kZImage; }
   bool isMnn() const { return type == ModelType::kSd15Cpu; }
 };
 
@@ -83,7 +87,7 @@ static void showHelp() {
          "\n"
          "Modes:\n"
          "  --type <type>          Model format: sd15cpu (MNN), sd15npu "
-         "(QNN), sdxl (QNN), anima (QNN)\n"
+         "(QNN), sdxl (QNN), anima (QNN), zimage (QNN)\n"
          "  --upscaler_mode        Upscale-only server, no diffusion model\n"
          "  --convert <dir>        Convert model.safetensors in <dir> to MNN "
          "and exit\n"
@@ -238,6 +242,8 @@ static ServerOptions processCommandLine(int argc, char **argv) {
     opts.type = ServerOptions::ModelType::kSd15Npu;
   else if (typeStr == "anima")
     opts.type = ServerOptions::ModelType::kAnima;
+  else if (typeStr == "zimage")
+    opts.type = ServerOptions::ModelType::kZImage;
   else
     showHelpAndExit(typeStr.empty() ? "Missing --type"
                                     : "Invalid --type: " + typeStr);
@@ -292,6 +298,38 @@ static std::unique_ptr<Pipeline> createPipeline(const ServerOptions &opts,
   const std::filesystem::path dir(opts.model_dir);
   const bool sdxl = opts.isSdxl();
   const bool anima = opts.isAnima();
+  const bool zimage = opts.isZImage();
+
+  if (zimage) {
+    const std::filesystem::path manifest = dir / "final_qnn_contract.json";
+    const std::filesystem::path tokenizer =
+        std::filesystem::is_regular_file(dir / "tokenizer" / "tokenizer.json")
+            ? dir / "tokenizer" / "tokenizer.json"
+            : dir / "tokenizer.json";
+    std::vector<std::string> required = {
+        tokenizer.string(),
+        manifest.string(),
+    };
+    try {
+      const auto contract = ZImageQnnContract::load(manifest);
+      if (!contract.isFinalDelivery())
+        showHelpAndExit("Z-Image requires final_qnn_contract.json from the Windows delivery");
+      // Follow the contract's own graph list. A hardcoded copy here breaks the
+      // moment the delivery layout changes (it did: part2 split into
+      // part2a/part2b made this abort with "Unknown Z-Image graph:
+      // transformer_part2" even though the contract itself was valid).
+      for (const auto &graph : contract.graphNames()) {
+        required.push_back((dir / contract.graph(graph).file).string());
+      }
+    } catch (const std::exception &e) {
+      showHelpAndExit("Invalid Z-Image QNN contract: " + std::string(e.what()));
+    }
+    for (const auto &path : required) {
+      if (!std::filesystem::is_regular_file(path))
+        showHelpAndExit("File not found: " + path);
+    }
+    return std::make_unique<PipelineZImage>(text_encoder, opts.model_dir);
+  }
 
   // Anima: Qwen "CLIP" (clip.bin, QNN) + split DiT (unet_part1/2.bin) + 16-ch
   // VAE. The Qwen text encoder uses RoPE internally, so there is no
@@ -392,7 +430,7 @@ static void registerGenerateEndpoint(httplib::Server &svr, Pipeline *pipeline) {
     try {
       auto json = nlohmann::json::parse(request.body);
       auto req = std::make_shared<GenerationRequest>(parseGenerationRequest(
-          json, pipeline->isSdxl(), pipeline->isAnima(),
+          json, pipeline->isSdxl(), pipeline->isAnima(), pipeline->isZImage(),
           pipeline->supportsImg2Img(), pipeline->supportsUltrafix()));
 
       std::cout << "Req Rcvd: P:" << req->prompt
@@ -662,7 +700,15 @@ static void registerTokenizeEndpoint(httplib::Server &svr,
       std::string text = json.value("prompt", std::string());
       // Anima counts with the T5 tokenizer against the context length (512),
       // far longer than CLIP's 77.
-      const int max_len = text_encoder->isAnima() ? anima_text_seq_len : 77;
+      // Z-Image is neither: its delivered QNN text contexts have a fixed
+      // [1, 20] input_ids ABI (scripts/dlc_contracts.json), and
+      // processZImagePrompt truncates to it silently. Reporting CLIP's 77 here
+      // is what made the UI counter say "6/77" while the real budget was 20
+      // total / ~12 usable, so the user got no warning before the cliff
+      // (ledger #134).
+      const int max_len = text_encoder->isAnima()  ? anima_text_seq_len
+                          : text_encoder->isZImage() ? zimage_text_max_length
+                                                     : 77;
 
       TokenizeInfo info = text_encoder->tokenizeInfo(text, max_len);
 
@@ -704,10 +750,15 @@ int main(int argc, char **argv) {
     if (!opts.lib_dir.empty() && !qnn_runtime::init(opts.lib_dir))
       showHelpAndExit("Failed get QNN system func ptrs.");
   } else {
-    text_encoder = std::make_unique<TextEncoder>(opts.isSdxl(), opts.isAnima());
+    text_encoder = std::make_unique<TextEncoder>(opts.isSdxl(), opts.isAnima(),
+                                                 opts.isZImage());
     try {
       const std::filesystem::path mdir(opts.model_dir);
-      text_encoder->loadTokenizer((mdir / "tokenizer.json").string());
+      const std::filesystem::path tokenizer =
+          opts.isZImage() && std::filesystem::is_regular_file(mdir / "tokenizer" / "tokenizer.json")
+              ? mdir / "tokenizer" / "tokenizer.json"
+              : mdir / "tokenizer.json";
+      text_encoder->loadTokenizer(tokenizer.string());
       // Anima's LLM adapter is fed by a second (T5) tokenizer.
       if (opts.isAnima())
         text_encoder->loadT5Tokenizer((mdir / "tokenizer_t5.json").string());
