@@ -13,7 +13,8 @@
 | 包名 | `io.github.xororz.localdream.zimage`（官方为 `io.github.xororz.localdream`） | ① `aapt2 dump badging` |
 | 应用名 | `本地梦-ZIT`（所有语言） | ① `aapt2 dump badging` |
 | 后端端口 | 生成 **8091** / 受控 **8818**（官方 8081 / 8808） | ① 装后设备 `/proc/net/tcp`：`:1F9B` LISTEN，`:1F91` 无 |
-| 导出目录 | `Pictures/LocalDreamZImage`、`Downloads/LocalDreamZImage` | ③ **未在设备上实测**（代码改动见 `ImageUtils.kt` `PUBLIC_EXPORT_DIR`） |
+| 导出目录 | `Pictures/LocalDreamZImage`、`Downloads/LocalDreamZImage` | ① 用户 2026-09-25 在手机上保存一张图，确认进入 LocalDreamZImage 相册（代码见 `ImageUtils.kt` `PUBLIC_EXPORT_DIR`）。`Downloads/` 那条（日志导出）未单独验 |
+| 桌面名字 / 图标 / 通知栏小图标 | 本地梦-ZIT / 星环图标 / 星形 | ① 用户 2026-09-25 手机上目视确认 |
 | 签名证书 | Android Debug，SHA-256 `22c13d4b…3ce46d` | ① `apksigner` 新旧一致 ⇒ `install -r` 原地升级 |
 | 回滚源 | `logs/apk_backup_20260925/base_v100_installed.apk`（sha256 `09c4a20a…acbb23`） | 装前从设备 `adb pull` |
 
