@@ -1,5 +1,60 @@
 # 磁盘占用清点与清理判定（2026-08-22）
 
+## 🗄️ 【2026-09-25】项目结束时的全量清点（本节最新，与下文冲突时以本节为准）
+
+> 做法：C:/D: 按名字搜到 3 层（`z-?image|qnn|qairt|snpe|localdream|sm8750|htp|flux|qwen`），
+> 再加名字不含关键词但相关的目录；大小用 `os.scandir` 递归实量（脚本见会话 scratchpad `size_inventory.py`）。
+> **本节只清点，未删除任何东西。** 手机端未连线，只列当天实际见过的。
+
+### 电脑（合计约 260 GB 项目专属）
+
+| 位置 | 大小 | 是什么 | 再生成本 |
+|---|---|---|---|
+| `D:\ZImage_Work\p0_experiments\` | 107.8 GB | 各轮实验的 DLC/context：`aspect` 53.4、`p2attr` 16.3、`h1_deliver` 13.8、`aspect_mg` 8.9 … | 🔴 需 SDK + ONNX + 数小时建图；#171 的 single 回滚源在 `aspect` 里 |
+| `D:\ZImage_Work\ZImage_QNN_Evidence\onnx\` | 42.1 GB | **源 ONNX**（别人给的导出） | 🔴🔴 **本项目无法再生**（没有导出配方，指南开头缺口 #1） |
+| `D:\ZImage_Work\ZImage_QNN_Evidence\calibration\` | 8.0 GB | 校准数据（40 样本） | 🔴 需脚本重跑 |
+| `D:\ZImage_Work\ZImage_QNN_Evidence\dlc_pipeline\` | 5.7 GB | 早期 DLC 流水线（含 1:1 VAE，#171 回滚源之一） | 🔴 |
+| `D:\ZImage_Work\publish\` | 13.0 GB 实占（统计显示 26 GB：zip 有一个硬链接副本在 `hf\`） | **发布包** + README/LICENSE/NOTICE + v102 APK | = HF 上的那份 |
+| `D:\ZImage_Work\package\` | 13.5 GB | 9-20 交付包（**带 101 个高通库**），手机上两个旧模型目录来自它 | 与 publish 模型文件逐字节相同，只多高通库 |
+| `D:\ZImage_Work\TIER2_L80\` | 8.7 GB | 文本编码器 4 段的 DLC + context（#186 谱系断链那组） | 🔴 |
+| `D:\ZImage_Work\device_only_backup_20260917\` | 2.6 GB | 9-17 从设备拉回的仅设备有的文件 | 不可从别处恢复 |
+| `D:\ZImage_Work\venv-official\` | 1.0 GB | 官方 PyTorch 对拍用的 Python 环境 | 可重建 |
+| `D:\ZImage_Work\*.json/*.py/*.onnx`（散件） | <0.1 GB | 早期契约、包装脚本 | — |
+| `D:\Z-Image-Turbo\` | 32.9 GB | 原始权重（Tongyi-MAI/Z-Image-Turbo） | 🟢 可从 HF 重新下载 |
+| `D:\qairt\` | 5.6 GB | QAIRT SDK 2.48.0.260626 | 🟢 可从高通重新下载；**重编 APK 需要它** |
+| `D:\ZIMAGE\` | 0.5 GB | 早期部署暂存（含 101 个高通库 + tokenizer + 契约，`models\` 为空） | 被 package 覆盖 |
+| `D:\WSL\` | 8.2 GB | Ubuntu 24.04（`aspect_preflight.py` 用它编译 C++ 契约解析器） | ⚠️ 是否只为本项目而装，待用户确认 |
+| `D:\LocalDreamZImage\local-dream\` | 5.9 GB | Git 仓库（`.git` 0.9）+ 编译缓存 `app\.cxx` 3.7 + `app\build` 0.85 | 源码已在 GitHub；缓存可重建 |
+| `D:\LocalDreamZImage\scratch_runs\` | 3.5 GB | 设备运行记录、出图、APK 备份（`apk_backup` 0.47） | 结论已入文档 |
+| `D:\LocalDreamZImage\logs\` | 1.0 GB | 日志与 APK 备份（`apk_backup_20260925` 含 v100/v101 回滚源） | 小，建议留 |
+| `D:\LocalDreamZImage\` 其余（docs/scripts/archive/…） | <0.1 GB | 文档、脚本 | 🔴 必留（已同步到 GitHub `qairt/`） |
+| `C:\Users\sinai\.android\debug.keystore` | 小 | **APK 签名** | 🔴🔴 丢了就无法给已装用户发升级（只能卸载重装 ⇒ 删掉 13 GB 模型） |
+| `C:\Users\sinai\AppData\Local\Android\Sdk\`、`.gradle\` | 8.0 / 1.8 GB | Android SDK/NDK、Gradle 缓存 | ⚠️ 是否与其他项目共用，待用户确认 |
+| `C:\Users\sinai\.claude\projects\D--LocalDreamZImage\` | 0.2 GB | 会话记忆与记录 | — |
+
+与项目无关、未计入：`D:\GoogleAI\生图工作流\*Z-image*.json`（ComfyUI 工作流）。
+
+### 手机（2026-09-25 当天所见）
+
+| 位置 | 大小 | 说明 |
+|---|---|---|
+| app 私有 `files/models/ZIMAGE` | 13 GB | 金标准出图用的这份（带 101 个高通库） |
+| app 私有 `files/models/ZIMAGE_sm8750_v2` | 13 GB | 9-20 用户导入的（带库） |
+| app 私有 `files/models/ZImageTurbo_A16W8_SM8750` | 12 GB | 9-25 导入测试的**发布包**（不带库） |
+| `/sdcard/Download/ZImageTurbo_A16W8_SM8750_qnn2.48.zip` | 13 GB | 导入测试用 |
+| `/sdcard/Download/ZIMAGE_sm8750_v2.zip` | 13.5 GB | 9-20 交付包 |
+| `/sdcard/Download/ZIMAGE.zip` | 6.9 GB | 8-11 早期版本 |
+| `/sdcard/Download/ZIMAGE_RECOVERY_STAGING/`、`LocalDreamZImage_armv8a_2.8.1_Fix4.apk`、`ZImage_HTP_image_quality_review_feedback.md` | — | 8 月的早期遗留 |
+| `/data/local/tmp` | 未查 | 历次 `qnn-net-run` 实验可能留有文件 |
+
+### 线上（已托管）
+
+- GitHub `94huangyu/local-dream-dev` 分支 `qairt-dev`：app 源码 + `qairt/`（文档、脚本、图标原图）
+- GitHub `94huangyu/tokenizers-cpp` 分支 `qairt-dev`：构建修复
+- HuggingFace `huangyu94/ZImageTurbo-QNN-SM8750`：发布包（上传中）
+
+---
+
 > **做法**：先量 → 建引用图 → 哈希查重 → 按**再生成本**分类。**不按文件名猜。**
 > 全部判定都附了证据来源；执行删除前请对照本表。
 
