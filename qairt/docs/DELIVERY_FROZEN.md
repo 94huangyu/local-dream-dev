@@ -9,7 +9,8 @@ v102 = v101 + QNN v79 运行库打进 APK（`assets/qnnlibs`，5 个），模型
 |---|---|
 | APK | `LocalDreamZImage_armv8a_2.8.1-zit2.apk`，sha256 `287a4bbec1152f5526afab54426adc4773cda795a12d3b29e449779260bbc166`（① 设备与宿主一致） |
 | `.so` | 仍为 `0357a043…`（① 逐字节不变） |
-| 验证 | 自带库的模型包 / 去掉库的模型包，出图 sha256 **都** == 金标准；加载路径由 `/proc/<pid>/maps` 确认（`scripts/EXP_PLAN_APK_QNNLIBS.md`） |
+| 验证 | 自带库的模型包 / 去掉库的模型包，出图 sha256 **都** == 金标准；加载路径由 `/proc/<pid>/maps` 确认（`scripts/EXP_PLAN_APK_QNNLIBS.md`）。**发布包经 app 导入后**出图同样 == 金标准（同文件"追加 D"） |
+| 设备上多出的测试物 | `files/models/ZImageTurbo_A16W8_SM8750`（导入测试，12 G）、`/sdcard/Download/ZImageTurbo_A16W8_SM8750_qnn2.48.zip`（13 G）—— 是否保留由用户定 |
 | 设备模型目录 | 测试后已还原，两个目录仍各带 101 个库（走老路径） |
 | 回滚源 | `logs/apk_backup_20260925/base_v101_installed.apk`（`444ac10f…`） |
 | 发布用模型包 | `D:\ZImage_Work\publish\ZImageTurbo_A16W8_SM8750_qnn2.48.zip`，12,945,674,253 B，sha256 `87e3de95b47f4bb7e225c9d1e86f0f19309877d00b4c5cf35ea40ce575472f93`；= 现网模型包去掉 `qnn_runtime_libs/`（其余 22 个条目逐字节相同）+ `LICENSE` + `NOTICE` |

@@ -54,3 +54,17 @@ APK 里的 `libQnnHtp.so` / `libQnnSystem.so` / `libQnnHtpV79Stub.so` / `libQnnH
 模型包里另外 96 个 `.so` 用不上。
 ⚠️ 适用范围：只验了 1024×1024 金标准这一种请求；其余四个比例走同一组库、同一后端，未单独跑。
 工具：`scripts/qnn_lib_origin.sh`（读后端 `/proc/<pid>/maps`）。
+
+## 追加 D：按"别人的流程"导入发布包（2026-09-25，🟢 通过）
+
+| 步 | 实测 |
+|---|---|
+| 推送 | 发布包 `ZImageTurbo_A16W8_SM8750_qnn2.48.zip` → `/sdcard/Download/`，设备 `sha256sum` == `87e3de95…` |
+| 导入 | 用户在 app 里导入（UI 手动），得到 `files/models/ZImageTurbo_A16W8_SM8750`（12 G，无 `qnn_runtime_libs/`，含 LICENSE/NOTICE）；完整性校验通过（生成 `.verified_cache`）；出现在模型列表 |
+| 服务对象 | 后端 `/proc/<pid>/cmdline`：`--model_dir …/models/ZImageTurbo_A16W8_SM8750 --lib_dir …/files/runtime_libs` |
+| 库 | maps：`libQnnHtp.so` 等均来自 `files/runtime_libs/`（APK） |
+| 出图 | sha256 `49be8e9a…83ad6` == 金标准（134.2 s）；亲自开图：完整橘猫 + 木桌 + 背景，无破图 |
+
+⇒ Python 重打的 ZIP64 包能被 app 的 `ZipInputStream` 正确解压；发布流程端到端成立。
+⚠️ 教训：第一次推送用 Git Bash，`/sdcard/Download/` 被 MSYS 改写成 `C:/Program Files/Git/sdcard/Download/` 导致失败
+（MAINLINE §7.4 早有记录）⇒ **adb 的设备路径参数一律走 PowerShell，或 Bash 里加 `MSYS_NO_PATHCONV=1`**。
