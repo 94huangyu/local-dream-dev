@@ -429,18 +429,26 @@ class BackendService : Service() {
                 return false
             }
             val qnnRuntimeDir = if (backendType == "zimage") {
-                val deliveredRuntime = File(modelsDir, "qnn_runtime_libs/aarch64-android")
-                // MVP targets HTP v79 (Snapdragon 8 Elite / SM8750) only. The
-                // matching DSP-side libQnnHtpV79Skel.so ships alongside the
-                // stub in this same directory (copied from the QAIRT SDK's
-                // redistributable lib/hexagon-v79/unsigned/ at model-export
-                // time), so DSP_LIBRARY_PATH below needs no on-device search.
-                val required = listOf("libQnnHtp.so", "libQnnSystem.so", "libQnnHtpV79Stub.so")
-                if (!required.all { File(deliveredRuntime, it).isFile }) {
-                    Log.e(TAG, "Z-Image runtime is incomplete: ${deliveredRuntime.absolutePath}")
+                // MVP targets HTP v79 (Snapdragon 8 Elite / SM8750) only; the
+                // DSP-side libQnnHtpV79Skel.so sits next to the stub, so
+                // DSP_LIBRARY_PATH below needs no on-device search.
+                // Older bundles carry their own runtime in qnn_runtime_libs/
+                // and keep using it. Published bundles don't: the QAIRT
+                // license only allows shipping these libraries inside the app,
+                // so they come from the APK (assets/qnnlibs -> runtimeDir).
+                val required = listOf(
+                    "libQnnHtp.so",
+                    "libQnnSystem.so",
+                    "libQnnHtpV79Stub.so",
+                    "libQnnHtpV79Skel.so",
+                )
+                val bundledRuntime = File(modelsDir, "qnn_runtime_libs/aarch64-android")
+                val chosen = if (bundledRuntime.isDirectory) bundledRuntime else runtimeDir
+                if (!required.all { File(chosen, it).isFile }) {
+                    Log.e(TAG, "Z-Image runtime is incomplete: ${chosen.absolutePath}")
                     return false
                 }
-                deliveredRuntime
+                chosen
             } else {
                 runtimeDir
             }

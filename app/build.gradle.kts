@@ -60,8 +60,10 @@ android {
         // in place instead of tripping Android's downgrade guard.
         // 101: renamed to 本地梦-ZIT with its own icon, ports and export folder
         // so it can run beside upstream Local Dream (3.x).
-        versionCode = 101
-        versionName = "2.8.1-zit"
+        // 102: QNN v79 runtime ships in the APK, so published model bundles
+        // can leave out qnn_runtime_libs/.
+        versionCode = 102
+        versionName = "2.8.1-zit2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -152,6 +154,40 @@ android {
     }
 }
 
+// QNN runtime for Z-Image, packaged as assets/qnnlibs and extracted to the
+// runtime dir by BackendService. The QAIRT license permits distributing these
+// libraries only as part of an application, so they ship in the APK and the
+// Z-Image model bundle no longer has to carry them. Z-Image context binaries
+// are compiled for SM8750 (HTP v79) only, hence just the v79 set.
+abstract class CopyQnnLibsTask : DefaultTask() {
+    @get:InputFiles
+    abstract val libs: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val dest = outputDir.get().asFile.resolve("qnnlibs")
+        dest.deleteRecursively()
+        dest.mkdirs()
+        libs.files.forEach { lib ->
+            require(lib.isFile) {
+                "QNN library missing: $lib. Set qnn.sdk.dir=<QAIRT SDK root> in local.properties."
+            }
+            lib.copyTo(File(dest, lib.name))
+        }
+    }
+}
+
+val zimageQnnLibs = listOf(
+    "lib/aarch64-android/libQnnHtp.so",
+    "lib/aarch64-android/libQnnSystem.so",
+    "lib/aarch64-android/libQnnHtpV79Stub.so",
+    "lib/hexagon-v79/unsigned/libQnnHtpV79.so",
+    "lib/hexagon-v79/unsigned/libQnnHtpV79Skel.so",
+)
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -160,6 +196,14 @@ kotlin {
 
 androidComponents {
     onVariants { variant ->
+        val sdk = machinePath("qnn.sdk.dir", "QNN_SDK_ROOT") ?: "<qnn.sdk.dir unset>"
+        val copyQnnLibs = tasks.register<CopyQnnLibsTask>(
+            "copyQnnLibs${variant.name.replaceFirstChar { it.uppercase() }}",
+        ) {
+            libs.from(zimageQnnLibs.map { "$sdk/$it" })
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(copyQnnLibs, CopyQnnLibsTask::outputDir)
+
         variant.outputs.forEach { output ->
             val versionName = output.versionName.orNull
             if (output is com.android.build.api.variant.impl.VariantOutputImpl) {

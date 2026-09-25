@@ -512,9 +512,13 @@ class ModelRepository private constructor(private val context: Context) {
             return false
         }
 
+        // Published bundles have no qnn_runtime_libs/ (the APK ships the QNN
+        // runtime, see BackendService). If a bundle does carry one, it must
+        // be complete, so a half-copied runtime is still rejected here.
         val qnnRuntimeDir = File(dir, "qnn_runtime_libs/aarch64-android")
         val missingSo = listOf("libQnnHtp.so", "libQnnSystem.so", "libQnnHtpV79Stub.so")
-            .firstOrNull { !File(qnnRuntimeDir, it).isFile }
+            .takeIf { qnnRuntimeDir.isDirectory }
+            ?.firstOrNull { !File(qnnRuntimeDir, it).isFile }
         if (missingSo != null) {
             Log.w("ModelTest", "isCompleteZImageBundle failed: missing SO file $missingSo")
             return false

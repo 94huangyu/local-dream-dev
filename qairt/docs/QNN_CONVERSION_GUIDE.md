@@ -4781,7 +4781,34 @@ Intent 若全是显式组件（本项目无广播）则不会串。
 背景层用原图边缘色 —— 否则方形遮罩下会看到原图直边的接缝（本项目第一版就出现了）。
 脚本 `qairt/scripts/make_zit_icons.py`，出圆/圆角/方形/主题/通知五联预览图，**先看图再接资源**。
 
-## 48.6 🧩 本章的边界
+## 48.6 发布模型给别人用：高通运行库进 APK，不进模型包（2026-09-25，①真机实测）
+
+**许可证原文**（`<QAIRT SDK>/LICENSE.pdf` §1，2.48.0.260626 版）：允许
+"distribute and sublicense the Software solely in object code format and **as incorporated in Your
+software application**"，并明写 "nothing herein grants You a license to distribute or sublicense the
+Software **on a standalone basis**"。
+⇒ 把 `libQnnHtp.so` 等放进模型 zip 挂到 HuggingFace 供单独下载，属于 standalone；**放进 APK 属于"集成在 app 里"**。
+⚠️ 这是按原文字面的理解，**不是法律意见**。换 SDK 版本要重读该条款。
+
+**同生态的先例**（①实测，2026-09-25）：上游 Local Dream 作者的 HF 仓库 `xororz/sd-qnn`，
+用 HTTP Range 只读 zip 目录区看了 `AnythingV5_qnn2.28_8gen2.zip`：只有 `.bin`/`.mnn`/tokenizer/patch，**零个 `.so`**；
+运行库在他的 APK `assets/qnnlibs` 里。
+
+**本项目的做法**（versionCode 102）：
+- Gradle 任务从 SDK 取 5 个 v79 库（`libQnnHtp.so`、`libQnnSystem.so`、`libQnnHtpV79Stub.so`、
+  `hexagon-v79/unsigned/libQnnHtpV79.so`、`libQnnHtpV79Skel.so`）作为 `assets/qnnlibs` 打进 APK（+12 MB）。
+  🔴 AGP 9 不许往 `sourceSets.assets.srcDir` 塞 Provider（报 "You cannot add Provider instances to the Android SourceSet API"），
+  要用 `variant.sources.assets.addGeneratedSourceDirectory(task, Task::outputDir)`。
+- `BackendService`：模型包有 `qnn_runtime_libs/` 就用它（老包不变），没有就用 APK 解压到 `runtime_libs/` 的。
+- 发布包 = 工作包去掉 `qnn_runtime_libs/`（101 个 `.so`，全部与 SDK 原文件逐字节相同）+ `LICENSE` + `NOTICE`。
+- **"5 个够不够"是实测出来的，不是推出来的**：去掉库的模型包出图 == 金标准，
+  且 `/proc/<pid>/maps` 证实加载的是 APK 那份（`scripts/qnn_lib_origin.sh`）。原包里另外 96 个 `.so` 用不上。
+  ⚠️ 适用范围：上下文二进制（`.bin`）路径。若新模型要**在设备上建图**，还需要 `libQnnHtpPrepare.so`（88 MB），要重新验。
+
+**模型本体**看基础模型许可证：Z-Image-Turbo 是 Apache-2.0（HF 卡片元数据 `license: apache-2.0`），
+允许发布衍生版，要求附 LICENSE 原文 + 写明改动（NOTICE）。换模型先查它的许可证 —— **Flux 系列各版本许可证不同，别默认可发布**。
+
+## 48.7 🧩 本章的边界
 
 - 本章回答"**要改哪些地方**"，**不**回答"怎么写一个新 Pipeline" ——
   那取决于新模型的调度器与前后处理，没有可复用配方。

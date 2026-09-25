@@ -1,0 +1,23 @@
+Z-Image Turbo for Snapdragon 8 Elite (SM8750) - QNN context binaries
+Copyright 2026 94huangyu
+
+This bundle is a derivative of Z-Image-Turbo by Tongyi-MAI
+(https://huggingface.co/Tongyi-MAI/Z-Image-Turbo), licensed under the
+Apache License, Version 2.0 (see LICENSE).
+
+Modifications made to the original model:
+- Started from ONNX exports of the transformer, text encoder and VAE decoder,
+  split into segments that fit the Hexagon NPU's per-context memory limit.
+- Graph edits: fixed sequence length (80 text tokens), fixed output sizes
+  (1024x1024, 1184x896, 896x1184, 1344x768, 768x1344), explicit clipping of
+  selected activations, removal of an identity ScatterElements.
+- Quantized to A16W8 (16-bit activations, 8-bit per-row weights) with a
+  selected set of tensors kept in FP16, using the Qualcomm AI Runtime (QAIRT)
+  SDK 2.48.0.260626.
+- Compiled to QNN HTP context binaries for SM8750 (HTP v79). They will not
+  run on other chips.
+
+This bundle contains no Qualcomm software. The QNN runtime libraries are
+shipped inside the companion Android app, as the QAIRT license permits.
+
+The resulting outputs differ numerically from the original FP32/BF16 model.
