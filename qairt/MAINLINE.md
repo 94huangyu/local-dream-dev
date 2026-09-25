@@ -9,6 +9,11 @@
 
 ### 0.1 目录结构
 
+> 🗄️ **2026-09-25 项目结束、目录已整理**：总索引见根目录 **`README.md`**（线上地址、不能删的东西、外部位置、重编 APK 步骤）。
+> 新增 `sdk\qairt\`（原 `D:\qairt`）、`release\`（原 `D:\ZImage_Work\publish`）、`keys\`（签名备份）；
+> `local-dream-ZIT0813\` 与 `D:\ZImage_Work` 剩余文件移入 `archive\`。旧路径 → 新路径见 `archive\PATH_MOVES_20260925.tsv`。
+> 下面的树是 2026-08-21 的原文，保留。
+
 ```
 D:\LocalDreamZImage
 ├── CLAUDE.md          🚫 不要 Read —— project instructions 已自动注入系统提示

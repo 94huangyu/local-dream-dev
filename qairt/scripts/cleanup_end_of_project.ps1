@@ -31,7 +31,8 @@ $targets = @(
 # ---- 必须保留的（删后逐个核对还在）----
 $keep = @(
     "$env:USERPROFILE\.android\debug.keystore",
-    'D:\qairt\2.48.0.260626',
+    'D:\LocalDreamZImage\keys\debug.keystore',
+    'D:\LocalDreamZImage\sdk\qairt\2.48.0.260626',
     'D:\LocalDreamZImage\docs\QNN_CONVERSION_GUIDE.md',
     'D:\LocalDreamZImage\docs\DELIVERY_FROZEN.md',
     'D:\LocalDreamZImage\MAINLINE.md',
@@ -41,10 +42,12 @@ $keep = @(
     'D:\LocalDreamZImage\local-dream\qairt',
     'D:\LocalDreamZImage\host-protoc',
     'D:\LocalDreamZImage\logs\apk_backup_20260925',
-    'D:\ZImage_Work\publish\LocalDreamZImage_armv8a_2.8.1-zit2.apk',
-    'D:\ZImage_Work\publish\README.md',
-    'D:\ZImage_Work\ZImage_QNN_Evidence\model_revision.txt'
+    'D:\LocalDreamZImage\release\LocalDreamZImage_armv8a_2.8.1-zit2.apk',
+    'D:\LocalDreamZImage\release\README.md',
+    'D:\LocalDreamZImage\archive\ZImage_Work\ZImage_QNN_Evidence\model_revision.txt'
 )
+# 2026-09-25 整理后：上面 $targets 里 D:\ZImage_Work\... 的各项都已删除或移入 archive\，
+# 脚本会逐项报"跳过（已不存在）"；剩下真正要删的只有 local-dream\app\build 与 WSL。
 
 function Get-Size([string]$p) {
     if (-not (Test-Path -LiteralPath $p)) { return -1 }
