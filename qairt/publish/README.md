@@ -44,7 +44,8 @@ Derived from [Tongyi-MAI/Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Imag
 tensors kept in FP16, and compiled with Qualcomm AI Runtime SDK 2.48 for HTP v79.
 Images are close to, but not identical with, the original model's output.
 Details are in `NOTICE`. The full conversion notes and scripts are in the
-`qairt/` folder of the app repository.
+[`qairt/` folder of the app repository](https://github.com/94huangyu/local-dream-dev/tree/qairt-dev/qairt)
+(archived; see the notice at the top of `docs/QNN_CONVERSION_GUIDE.md` for what it does and does not cover).
 
 This bundle contains no Qualcomm software; the QNN runtime ships inside the app.
 
