@@ -36,6 +36,8 @@
     <string name="anima_lowram_hint">Anima 専用：各モデルを必要時にのみ読み込み、使用後に解放します。16GB 未満のデバイスでは有効化してください。生成途中のプレビューは無効になります。</string>
     <string name="anima_seq_dit">Anima DiT 逐次ロード</string>
     <string name="anima_seq_dit_hint">Anima 低メモリモード時のみ有効：DiT の 2 つの部分を同時にメモリへ常駐させません。12GB の RAM があっても Anima 低メモリモードが動作しない場合に有効化してください。ステップごとに遅くなります。</string>
+    <string name="dit_lowram">DiT 省メモリモード</string>
+    <string name="dit_lowram_hint">Z-Image、FLUX.2 Klein、Qwen Image は画像ごとにすべてのモデルをストレージから再読み込みします。オフにすると DiT と VAE が生成の合間も読み込まれたままになり高速になりますが、メモリを約 6 GB 多く使います。RAM が 16 GB 未満の端末では既定でオンです。</string>
     <string name="captured_logs_title">収集されたログ</string>
     <string name="log_saved">%1$s に保存しました</string>
     <string name="log_save_failed">ログの保存に失敗しました</string>
@@ -304,6 +306,7 @@
     <string name="dit_import_error_space">ストレージ不足：%1$s 必要、空き %2$s</string>
     <string name="dit_import_error_format">safetensors または GGUF ファイルではありません</string>
     <string name="dit_import_error_e5m2">FP8 E5M2 の重みには対応していません。先に FP8 E4M3 に変換してください。</string>
+    <string name="dit_import_error_int8">INT8 量子化の重みには対応していません。FP8 E4M3 または BF16 の重みを使ってください。</string>
     <string name="dit_import_error_bundled">このチェックポイントにはテキストエンコーダーまたは VAE も含まれています。拡散モデルのみをインポートしてください。</string>
     <string name="dit_import_error_kind">この重みは %2$s ではなく %1$s のようです</string>
     <string name="copying_model_file">モデルファイルをコピーしています…</string>

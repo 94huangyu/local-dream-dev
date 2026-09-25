@@ -254,6 +254,9 @@ const val DIT_SIZE_STEPS = DitResolution.SLIDER_STEPS
 
 fun snapDitSize(value: Float): Int = DitResolution.snap(value)
 
+/** The only sampler PipelineDit runs; see its sample_method. */
+const val DIT_SCHEDULER = "euler"
+
 /**
  * GCD-reduces (width, height) into a "W:H" aspect-ratio string.
  * Used by reproduce/import paths to recover an aspect from a recorded result size.

@@ -1589,6 +1589,9 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                         preferences.getBoolean("anima_seq_dit", false),
                                     )
                                 }
+                                var ditLowRam by remember {
+                                    mutableStateOf(DitEngine.isLowRam(context, preferences))
+                                }
 
                                 SwitchSettingRow(
                                     title = "img2img",
@@ -1844,6 +1847,20 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                             },
                                         )
                                     }
+                                }
+                                if (DitEngine.isSupportedDevice()) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                    )
+                                    SwitchSettingRow(
+                                        title = stringResource(R.string.dit_lowram),
+                                        description = stringResource(R.string.dit_lowram_hint),
+                                        checked = ditLowRam,
+                                        onCheckedChange = {
+                                            ditLowRam = it
+                                            preferences.edit { putBoolean(DitEngine.LOW_RAM_PREF, it) }
+                                        },
+                                    )
                                 }
                                 HorizontalDivider(
                                     modifier = Modifier.padding(horizontal = 16.dp),

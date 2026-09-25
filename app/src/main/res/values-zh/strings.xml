@@ -36,6 +36,8 @@
     <string name="anima_lowram_hint">仅 Anima 生效：按需加载每个模型，用完即释放。小于 16GB 内存的设备建议开启。开启后将禁用生成过程预览。</string>
     <string name="anima_seq_dit">Anima DiT 轮流加载</string>
     <string name="anima_seq_dit_hint">仅在 Anima 低内存模式下生效：不再让 DiT 的两块同时驻留内存。如果你有 12GB 内存但 Anima 低内存模式仍无法运行，请开启此选项。每步速度会变慢。</string>
+    <string name="dit_lowram">DiT 低内存模式</string>
+    <string name="dit_lowram_hint">Z-Image、FLUX.2 Klein 和 Qwen Image 每张图都从存储重新加载全部模型。关闭后 DiT 和 VAE 在两次生成之间保持加载，速度更快，但会多占用约 6 GB 内存。内存低于 16 GB 的设备默认开启。</string>
     <string name="captured_logs_title">已收集的日志</string>
     <string name="log_saved">已保存到 %1$s</string>
     <string name="log_save_failed">日志保存失败</string>
@@ -304,6 +306,7 @@
     <string name="dit_import_error_space">存储空间不足：需要 %1$s，剩余 %2$s</string>
     <string name="dit_import_error_format">不是 safetensors 或 GGUF 文件</string>
     <string name="dit_import_error_e5m2">不支持 FP8 E5M2 权重，请先转换为 FP8 E4M3。</string>
+    <string name="dit_import_error_int8">不支持 INT8 量化权重，请使用 FP8 E4M3 或 BF16 权重。</string>
     <string name="dit_import_error_bundled">该模型文件还包含文本编码器或 VAE，请只导入扩散模型部分。</string>
     <string name="dit_import_error_kind">这些权重看起来是 %1$s，而不是 %2$s</string>
     <string name="copying_model_file">复制模型文件中…</string>

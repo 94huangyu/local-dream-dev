@@ -38,6 +38,8 @@
     <string name="anima_lowram_hint">For Anima only: load each model on demand and free it after use. Required on devices with less than 16GB RAM. Disables in-progress preview.</string>
     <string name="anima_seq_dit">Anima DiT sequential loading</string>
     <string name="anima_seq_dit_hint">Only with Anima low RAM mode: never keep both DiT halves in memory at the same time. Enable this if you have 12GB RAM but Anima low RAM mode still cannot run. Slower per step.</string>
+    <string name="dit_lowram">DiT Low RAM Mode</string>
+    <string name="dit_lowram_hint">Z-Image, FLUX.2 Klein and Qwen Image reload every model from storage for each image. Off, the DiT and VAE stay loaded between images, which is faster but holds about 6 GB more memory. On by default below 16 GB of RAM.</string>
     <string name="captured_logs_title">Captured logs</string>
     <string name="log_saved">Saved to %1$s</string>
     <string name="log_save_failed">Failed to save log</string>
@@ -314,6 +316,7 @@
     <string name="dit_import_error_space">Not enough storage: %1$s needed, %2$s free</string>
     <string name="dit_import_error_format">Not a safetensors or GGUF file</string>
     <string name="dit_import_error_e5m2">FP8 E5M2 weights are not supported. Convert them to FP8 E4M3 first.</string>
+    <string name="dit_import_error_int8">INT8-quantized weights are not supported. Use FP8 E4M3 or BF16 weights.</string>
     <string name="dit_import_error_bundled">This checkpoint also contains the text encoder or VAE. Import the diffusion model on its own.</string>
     <string name="dit_import_error_kind">These weights look like %1$s, not %2$s</string>
     <string name="copying_model_file">Copying model file…</string>

@@ -87,10 +87,14 @@ struct ServerOptions {
   // Run all three DiT modules on the Hexagon NPU. The Android catalog only
   // exposes these models on the SM8750-and-newer devices validated upstream.
   std::string dit_backend = "diffusion=HTP0,te=HTP0,vae=HTP0";
-  // Load a component lazily and discard its parameters at runner_end(). This
-  // keeps TE, DiT and VAE weights from remaining co-resident between stages;
-  // intra-component segment prefetch remains enabled for throughput.
-  std::string dit_params_backend = "all=disk";
+  // With --lowram, every component is loaded lazily and its parameters are
+  // discarded at runner_end(), so TE, DiT and VAE are never co-resident but
+  // each image re-reads (and re-packs) all of them. Without it only the text
+  // encoder is streamed that way; the DiT and VAE load on first use and stay
+  // resident across generations. Intra-component segment prefetch stays on
+  // either way.
+  static constexpr const char *kDitParamsLowRam = "all=disk";
+  static constexpr const char *kDitParamsResident = "te=disk";
   int dit_threads = 4;
   int dit_vae_tile_size = 64;
   bool convert_clip_skip_2 = false;
@@ -141,7 +145,7 @@ static void showHelp() {
          "  --no_img2img           Disable img2img/inpaint; modular backends\n"
          "                         also skip the VAE encoder\n"
          "  --use_v_pred           v-prediction model\n"
-         "  --lowram               (sdxl/anima) load/release models per stage\n"
+         "  --lowram               (sdxl/anima/DiT) load/release models per stage\n"
          "  --anima_seq_dit        (anima+lowram) never keep both DiT halves "
          "resident; for 12GB devices\n"
          "  --clip_skip_2          (convert) export CLIP with skip 2\n"
@@ -387,7 +391,8 @@ static std::unique_ptr<Pipeline> createPipeline(const ServerOptions &opts,
     return std::make_unique<PipelineDit>(
         text_encoder, opts.model_dir, engine_path, dit_path, llm_path,
         llm_vision_path, vae_path, kind, opts.dit_backend,
-        opts.dit_params_backend,
+        opts.lowram ? ServerOptions::kDitParamsLowRam
+                    : ServerOptions::kDitParamsResident,
         opts.dit_threads, opts.dit_vae_tile_size, !opts.no_img2img);
   }
 

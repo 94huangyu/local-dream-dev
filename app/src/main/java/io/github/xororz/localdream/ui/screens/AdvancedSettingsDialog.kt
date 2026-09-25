@@ -248,81 +248,85 @@ internal fun AdvancedSettingsDialog(
                     }
                 }
 
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    // Split scheduler id into base + Karras flag so the UI
-                    // can offer one base chip per family plus a single
-                    // Karras switch, instead of listing every combination.
-                    val baseId = scheduler.removeSuffix("_karras")
-                    val karras = scheduler.endsWith("_karras")
-                    val karrasSupported = baseId != "lcm"
-                    val baseOptions = listOf(
-                        "dpm" to "DPM++ 2M",
-                        "dpm_sde" to "DPM++ 2M SDE",
-                        "euler_a" to "Euler A",
-                        "euler" to "Euler",
-                        "lcm" to "LCM",
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            stringResource(R.string.scheduler),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
+                // DiT models always sample with Euler (PipelineDit), so offering
+                // other schedulers there would only be ignored.
+                if (!isDit) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Split scheduler id into base + Karras flag so the UI
+                        // can offer one base chip per family plus a single
+                        // Karras switch, instead of listing every combination.
+                        val baseId = scheduler.removeSuffix("_karras")
+                        val karras = scheduler.endsWith("_karras")
+                        val karrasSupported = baseId != "lcm"
+                        val baseOptions = listOf(
+                            "dpm" to "DPM++ 2M",
+                            "dpm_sde" to "DPM++ 2M SDE",
+                            "euler_a" to "Euler A",
+                            "euler" to "Euler",
+                            "lcm" to "LCM",
                         )
-                        Text(
-                            "Karras",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                                .alpha(if (karrasSupported) 1f else 0.4f),
-                        )
-                        CompositionLocalProvider(
-                            LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Switch(
-                                checked = karras && karrasSupported,
-                                enabled = karrasSupported,
-                                onCheckedChange = { enable ->
-                                    onSchedulerChange(
-                                        if (enable) "${baseId}_karras" else baseId,
-                                    )
-                                },
-                                modifier = Modifier.scale(0.8f),
+                            Text(
+                                stringResource(R.string.scheduler),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
                             )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(
-                            ButtonGroupDefaults.ConnectedSpaceBetween,
-                        ),
-                    ) {
-                        baseOptions.forEachIndexed { index, (id, label) ->
-                            val shapes = when (index) {
-                                0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
-
-                                baseOptions.lastIndex ->
-                                    ButtonGroupDefaults.connectedTrailingButtonShapes()
-
-                                else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
-                            }
-                            ToggleButton(
-                                checked = baseId == id,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        val nextKarras = karras && id != "lcm"
-                                        onSchedulerChange(
-                                            if (nextKarras) "${id}_karras" else id,
-                                        )
-                                    }
-                                },
-                                shapes = shapes,
+                            Text(
+                                "Karras",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .alpha(if (karrasSupported) 1f else 0.4f),
+                            )
+                            CompositionLocalProvider(
+                                LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
                             ) {
-                                Text(label)
+                                Switch(
+                                    checked = karras && karrasSupported,
+                                    enabled = karrasSupported,
+                                    onCheckedChange = { enable ->
+                                        onSchedulerChange(
+                                            if (enable) "${baseId}_karras" else baseId,
+                                        )
+                                    },
+                                    modifier = Modifier.scale(0.8f),
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(
+                                ButtonGroupDefaults.ConnectedSpaceBetween,
+                            ),
+                        ) {
+                            baseOptions.forEachIndexed { index, (id, label) ->
+                                val shapes = when (index) {
+                                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+
+                                    baseOptions.lastIndex ->
+                                        ButtonGroupDefaults.connectedTrailingButtonShapes()
+
+                                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                                }
+                                ToggleButton(
+                                    checked = baseId == id,
+                                    onCheckedChange = { checked ->
+                                        if (checked) {
+                                            val nextKarras = karras && id != "lcm"
+                                            onSchedulerChange(
+                                                if (nextKarras) "${id}_karras" else id,
+                                            )
+                                        }
+                                    },
+                                    shapes = shapes,
+                                ) {
+                                    Text(label)
+                                }
                             }
                         }
                     }

@@ -584,6 +584,11 @@ class BackendService : Service() {
                     command += "--anima_seq_dit"
                 }
             }
+            // DiT low-RAM streams every component from disk per image; off, the
+            // DiT and VAE stay resident between generations.
+            if (isDitBackend(backendType) && DitEngine.isLowRam(this, preferences)) {
+                command += "--lowram"
+            }
             if (listenOnAll) {
                 command += "--listen_all"
             }

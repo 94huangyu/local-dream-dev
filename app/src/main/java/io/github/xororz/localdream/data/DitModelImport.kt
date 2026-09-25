@@ -270,15 +270,23 @@ object DitModelImport {
 
     private fun checkSafetensorsHeader(context: Context, header: JSONObject, kind: Kind) {
         var hasE5m2 = false
+        var hasInt8 = false
         var bundled = false
         val detected = mutableSetOf<Kind>()
         for (key in header.keys()) {
             if (key == "__metadata__") continue
-            if (header.optJSONObject(key)?.optString("dtype") == "F8_E5M2") hasE5m2 = true
+            when (header.optJSONObject(key)?.optString("dtype")) {
+                "F8_E5M2" -> hasE5m2 = true
+
+                // ComfyUI int8_tensorwise: the Hexagon fork aborts the whole
+                // backend process on its I8 matmul instead of failing the load.
+                "I8" -> hasInt8 = true
+            }
             if (BUNDLED_PREFIXES.any { key.startsWith(it) }) bundled = true
             Kind.entries.filterTo(detected) { key.contains(it.signature) }
         }
         if (hasE5m2) throw ImportException(context.getString(R.string.dit_import_error_e5m2))
+        if (hasInt8) throw ImportException(context.getString(R.string.dit_import_error_int8))
         if (bundled) throw ImportException(context.getString(R.string.dit_import_error_bundled))
         // Only reject a clear mismatch: an unrecognized layout is left for the
         // engine to identify, since it knows more key conventions than we do.

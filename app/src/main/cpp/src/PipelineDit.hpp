@@ -3,8 +3,14 @@
 
 #include <dlfcn.h>
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <cstdlib>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "DitEngine.h"
@@ -162,6 +168,33 @@ class PipelineDit : public Pipeline {
       }
     }
 
+    // Every reference is VAE-encoded and appended to the DiT sequence, so the
+    // step cost and activation memory grow with their total size, not just
+    // the output's. The engine resizes each one to at most the output area
+    // (FLUX.2 also caps it at 1 MP). Keep the whole sequence within a 2048x2048
+    // generation (the largest validated size) plus one 1 MP reference, so an
+    // oversized edit fails up front instead of the OS killing the backend
+    // partway through.
+    if (!reference_ptrs.empty()) {
+      const long long output_pixels =
+          static_cast<long long>(req.width) * req.height;
+      const long long per_reference =
+          kind_ == DIT_MODEL_QWEN_IMAGE_2_1
+              ? output_pixels
+              : std::min(output_pixels, kFluxReferencePixels);
+      const long long sequence_pixels =
+          output_pixels +
+          per_reference * static_cast<long long>(reference_ptrs.size());
+      if (sequence_pixels > kMaxSequencePixels) {
+        throw std::invalid_argument(
+            "too many reference images for this size: " +
+            std::to_string(reference_ptrs.size()) +
+            " references at " + std::to_string(req.width) + "x" +
+            std::to_string(req.height) +
+            " exceed the memory budget; remove some or lower the size");
+      }
+    }
+
     dit_gen_params params{};
     params.prompt = req.prompt.c_str();
     params.negative_prompt = req.negative_prompt.c_str();
@@ -206,6 +239,7 @@ class PipelineDit : public Pipeline {
                         native_edit && params.init_image_rgb == nullptr,
                         pre_sample_steps};
     const auto start = std::chrono::high_resolution_clock::now();
+    HangWatchdog watchdog;
 
     uint8_t *out_pixels = nullptr;
     int out_width = 0;
@@ -283,6 +317,71 @@ class PipelineDit : public Pipeline {
   static constexpr float kDistilledGuidance = 3.5f;
   // 1536x1536 still decodes whole on the devices this runs on; 2048 does not.
   static constexpr long kTileAbovePixels = 1536L * 1536L;
+  // Largest total DiT sequence (output plus references) accepted, in pixels,
+  // and the area FLUX.2 resizes each reference to at most.
+  static constexpr long long kMaxSequencePixels =
+      2048LL * 2048LL + 1024LL * 1024LL;
+  static constexpr long long kFluxReferencePixels = 1024LL * 1024LL;
+
+  // The Hexagon backend waits on the DSP queue without a deadline, and a
+  // cancel only lands between sampling steps, so a wedged DSP would otherwise
+  // hang this request (and the backend) forever. The slowest legitimate gap
+  // between engine callbacks is one 2048² sampling step or a full-frame VAE
+  // decode, a few minutes at most; after this much silence the process exits
+  // so BackendService reports the crash and the next request starts clean.
+  static constexpr auto kHangTimeout = std::chrono::minutes(15);
+
+  static std::atomic<int64_t> &lastActivityMs() {
+    static std::atomic<int64_t> value{0};
+    return value;
+  }
+
+  static int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  }
+
+  static void markActivity() { lastActivityMs().store(nowMs()); }
+
+  // Exits the process when no engine callback (progress, preview or log)
+  // arrives for kHangTimeout while a generation is running.
+  class HangWatchdog {
+   public:
+    HangWatchdog() : thread_([this] { run(); }) { markActivity(); }
+    ~HangWatchdog() {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        done_ = true;
+      }
+      cv_.notify_all();
+      thread_.join();
+    }
+    HangWatchdog(const HangWatchdog &) = delete;
+    HangWatchdog &operator=(const HangWatchdog &) = delete;
+
+   private:
+    void run() {
+      const int64_t timeout_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(kHangTimeout)
+              .count();
+      std::unique_lock<std::mutex> lock(mutex_);
+      while (!cv_.wait_for(lock, std::chrono::seconds(10),
+                           [this] { return done_; })) {
+        if (nowMs() - lastActivityMs().load() > timeout_ms) {
+          QNN_ERROR("DiT engine made no progress for %lld s; exiting",
+                    static_cast<long long>(timeout_ms / 1000));
+          // _Exit: destructors could block on the same wedged DSP queue.
+          std::_Exit(EXIT_FAILURE);
+        }
+      }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool done_ = false;
+    std::thread thread_;
+  };
 
   bool isNativeEditModel() const {
     return kind_ == DIT_MODEL_FLUX2_KLEIN ||
@@ -384,6 +483,7 @@ class PipelineDit : public Pipeline {
 
   static bool forwardProgress(int step, int total_steps, float step_seconds,
                               void *user_data) {
+    markActivity();
     auto *cb = static_cast<Callbacks *>(user_data);
     if (total_steps > 0) {
       cb->sampling_started = true;
@@ -429,6 +529,7 @@ class PipelineDit : public Pipeline {
 
   static void forwardPreview(int, const uint8_t *rgb, int width, int height,
                              void *user_data) {
+    markActivity();
     auto *cb = static_cast<Callbacks *>(user_data);
     if (!rgb || width <= 0 || height <= 0) return;
     std::vector<uint8_t> data(
@@ -442,6 +543,7 @@ class PipelineDit : public Pipeline {
   }
 
   static void forwardLog(int level, const char *text, void *) {
+    markActivity();
     if (level >= 3) {
       QNN_ERROR("[dit] %s", text);
     } else {
