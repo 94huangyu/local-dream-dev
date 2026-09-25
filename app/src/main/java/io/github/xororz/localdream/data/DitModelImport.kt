@@ -2,6 +2,7 @@ package io.github.xororz.localdream.data
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.system.ErrnoException
 import android.system.Os
 import android.text.format.Formatter
@@ -38,6 +39,7 @@ import org.json.JSONObject
 object DitModelImport {
     private const val TAG = "DitModelImport"
     private const val COPY_BUFFER_BYTES = 1 shl 20
+    private const val PROGRESS_INTERVAL_MS = 120L
 
     // A safetensors header is a JSON index; anything larger is not one.
     private const val MAX_SAFETENSORS_HEADER_BYTES = 64L shl 20
@@ -219,12 +221,20 @@ object DitModelImport {
         if (!modelDir.mkdirs()) throw ImportException(context.getString(R.string.cannot_open_file))
         try {
             var copiedBytes = 0L
+            var lastReportMs = 0L
             for ((uri, target) in copies) {
                 onStage(context.getString(R.string.dit_import_copying, target.name))
                 copyUri(context, uri, target) { delta ->
                     copiedBytes += delta
-                    onBytes(copiedBytes, totalBytes)
+                    // Chunks are 1 MB, so report at most every PROGRESS_INTERVAL_MS
+                    // instead of recomposing thousands of times per file.
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastReportMs >= PROGRESS_INTERVAL_MS) {
+                        lastReportMs = now
+                        onBytes(copiedBytes, totalBytes)
+                    }
                 }
+                onBytes(copiedBytes, totalBytes)
             }
             if (links.isNotEmpty()) {
                 onStage(context.getString(R.string.dit_import_linking))
