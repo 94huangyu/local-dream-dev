@@ -55,11 +55,13 @@ if ! grep -q "Server listening" "$LOG" 2>/dev/null; then
   exit 1
 fi
 
-"$ADB" -s "$DEVICE" forward tcp:8081 tcp:8081 >/dev/null
+# versionCode 101 起端口 8081 → 8091（与官方 Local Dream 并存），见 app_generate.sh
+PORT="${ZIT_PORT:-8091}"
+"$ADB" -s "$DEVICE" forward "tcp:$PORT" "tcp:$PORT" >/dev/null
 
 echo "Requesting generation (prompt: $PROMPT)"
 echo "Current transformer loading is per-step (see PipelineZImage.hpp comments) -- full run takes ~4 minutes."
-curl -sS -m 600 -X POST http://127.0.0.1:8081/generate \
+curl -sS -m 600 -X POST "http://127.0.0.1:$PORT/generate" \
   -H "Content-Type: application/json" \
   -d "$(python -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "output_format": "png"}))' "$PROMPT")" \
   -o "$SSE" \

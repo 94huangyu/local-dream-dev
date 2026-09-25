@@ -93,6 +93,7 @@ import io.github.xororz.localdream.ui.theme.Motion
 import io.github.xororz.localdream.ui.theme.ThemePreset
 import io.github.xororz.localdream.ui.theme.scheme
 import io.github.xororz.localdream.utils.LogCapture
+import io.github.xororz.localdream.utils.PUBLIC_EXPORT_DIR
 import io.github.xororz.localdream.utils.TempCleaner
 import java.io.BufferedOutputStream
 import java.io.File
@@ -599,7 +600,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                     put(MediaStore.Downloads.MIME_TYPE, "text/plain")
                                     put(
                                         MediaStore.Downloads.RELATIVE_PATH,
-                                        Environment.DIRECTORY_DOWNLOADS + "/LocalDream",
+                                        Environment.DIRECTORY_DOWNLOADS + "/" + PUBLIC_EXPORT_DIR,
                                     )
                                 }
                                 val resolver = context.contentResolver
@@ -610,13 +611,13 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                 resolver.openOutputStream(uri)?.use { out ->
                                     out.write(capturedLogs.toByteArray(Charsets.UTF_8))
                                 } ?: throw java.io.IOException("openOutputStream failed")
-                                "Downloads/LocalDream/$filename"
+                                "Downloads/$PUBLIC_EXPORT_DIR/$filename"
                             } else {
                                 val dir = File(
                                     Environment.getExternalStoragePublicDirectory(
                                         Environment.DIRECTORY_DOWNLOADS,
                                     ),
-                                    "LocalDream",
+                                    PUBLIC_EXPORT_DIR,
                                 )
                                 if (!dir.exists()) dir.mkdirs()
                                 val file = File(dir, filename)

@@ -28,6 +28,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
+/**
+ * Public folder name (under Pictures/ and Downloads/) for everything this app
+ * exports. Distinct from upstream Local Dream's "LocalDream" so the two apps,
+ * installed side by side, don't mix their images and logs.
+ */
+const val PUBLIC_EXPORT_DIR = "LocalDreamZImage"
+
 private val saveSequence = AtomicLong(0L)
 
 private val reportClient: OkHttpClient by lazy {
@@ -264,7 +271,7 @@ suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, o
                     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                     put(
                         MediaStore.Images.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/LocalDream",
+                        Environment.DIRECTORY_PICTURES + "/" + PUBLIC_EXPORT_DIR,
                     )
                 }
 
@@ -292,7 +299,7 @@ suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, o
                     Environment.getExternalStoragePublicDirectory(
                         Environment.DIRECTORY_PICTURES,
                     ),
-                    "LocalDream",
+                    PUBLIC_EXPORT_DIR,
                 )
 
                 if (!imagesDir.exists()) {
@@ -337,7 +344,7 @@ suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, o
 }
 
 /**
- * Copies a pre-encoded image file (PNG/JPEG) into the Pictures/LocalDream gallery
+ * Copies a pre-encoded image file (PNG/JPEG) into the Pictures/[PUBLIC_EXPORT_DIR] gallery
  * folder without decoding + re-encoding. Used for batch-saving history items
  * where the source file is already in the format we want to export.
  */
@@ -359,7 +366,7 @@ suspend fun saveImageFromFile(context: Context, sourceFile: File, onSuccess: () 
                     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                     put(
                         MediaStore.Images.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/LocalDream",
+                        Environment.DIRECTORY_PICTURES + "/" + PUBLIC_EXPORT_DIR,
                     )
                 }
                 val resolver = context.contentResolver
@@ -376,7 +383,7 @@ suspend fun saveImageFromFile(context: Context, sourceFile: File, onSuccess: () 
                     Environment.getExternalStoragePublicDirectory(
                         Environment.DIRECTORY_PICTURES,
                     ),
-                    "LocalDream",
+                    PUBLIC_EXPORT_DIR,
                 )
                 if (!imagesDir.exists()) imagesDir.mkdirs()
                 val outFile = File(imagesDir, filename)

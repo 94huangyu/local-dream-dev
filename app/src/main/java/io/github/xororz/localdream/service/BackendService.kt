@@ -8,6 +8,7 @@ import androidx.core.app.NotificationCompat
 import io.github.xororz.localdream.BuildConfig
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.remote.RemoteProtocol
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -88,7 +89,7 @@ class BackendService : Service() {
             val _backendState = MutableStateFlow<BackendState>(BackendState.Idle)
 
             // modelId the live process is serving (null when none). Process-wide
-            // so a screen can tell whether 8081 is already serving *its* model
+            // so a screen can tell whether the backend port is already serving *its* model
             // vs. a previous model still alive in the stop grace window.
             val _servingModelId = MutableStateFlow<String?>(null)
 
@@ -321,7 +322,7 @@ class BackendService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(this.getString(R.string.backend_notify_title))
             .setContentText(contentText)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setSmallIcon(R.drawable.ic_stat_zit)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
@@ -461,7 +462,7 @@ class BackendService : Service() {
                     "--lib_dir",
                     runtimeDir.absolutePath,
                     "--port",
-                    "8081",
+                    RemoteProtocol.GENERATION_PORT.toString(),
                 )
             } else {
                 mutableListOf(
@@ -471,7 +472,7 @@ class BackendService : Service() {
                     "--model_dir",
                     modelsDir.absolutePath,
                     "--port",
-                    "8081",
+                    RemoteProtocol.GENERATION_PORT.toString(),
                 )
             }
             if (backendType != "sd15cpu" && backendType != BACKEND_TYPE_UPSCALER) {

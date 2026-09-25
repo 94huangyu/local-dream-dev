@@ -141,12 +141,12 @@ internal suspend fun checkBackendHealth(
 
                 try {
                     val request = Request.Builder()
-                        .url("http://localhost:8081/health")
+                        .url("http://${BackgroundGenerationService.LOCAL_BACKEND_HOST}/health")
                         .get()
                         .build()
 
                     val healthy = healthClient.newCall(request).execute().use { it.isSuccessful }
-                    // A 200 only proves *some* backend answers on 8081. During a
+                    // A 200 only proves *some* backend answers on the port. During a
                     // model switch (and the stop grace window) the previous model
                     // can still be alive, so also require the service to report it
                     // is serving the model this screen wants before declaring ready.

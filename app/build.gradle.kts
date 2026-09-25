@@ -58,8 +58,10 @@ android {
         // Ahead of the version already installed on the test device (a hand-
         // patched build from an earlier session) so `adb install -r` upgrades
         // in place instead of tripping Android's downgrade guard.
-        versionCode = 100
-        versionName = "2.8.1-zimage-mvp"
+        // 101: renamed to 本地梦-ZIT with its own icon, ports and export folder
+        // so it can run beside upstream Local Dream (3.x).
+        versionCode = 101
+        versionName = "2.8.1-zit"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

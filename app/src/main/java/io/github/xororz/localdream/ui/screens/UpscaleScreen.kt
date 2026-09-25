@@ -194,7 +194,7 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
                     "--lib_dir",
                     runtimeDir.absolutePath,
                     "--port",
-                    "8081",
+                    RemoteProtocol.GENERATION_PORT.toString(),
                 )
                 if (listenOnAll) {
                     command = command + "--listen_all"

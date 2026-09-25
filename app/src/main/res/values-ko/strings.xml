@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">Local Dream</string>
+    <string name="app_name">本地梦-ZIT</string>
 
     <!-- Models -->
     <string name="anythingv5_description">애니풍 이미지 생성</string>
@@ -10,7 +10,7 @@
     <string name="capture_logs">로그 수집</string>
     <string name="capture_logs_hint">모델 실행 중 앱 로그를 수집하고 종료 후 표시합니다</string>
     <string name="listen_on_all_addresses">LAN 접근 허용</string>
-    <string name="listen_on_all_addresses_hint">같은 네트워크의 다른 기기가 백엔드(포트 8081)에 접근할 수 있게 합니다. 끄면 로컬에서만 접근할 수 있습니다.</string>
+    <string name="listen_on_all_addresses_hint">같은 네트워크의 다른 기기가 백엔드(포트 8091)에 접근할 수 있게 합니다. 끄면 로컬에서만 접근할 수 있습니다.</string>
     <string name="tag_autocomplete">태그 자동 완성</string>
     <string name="tag_autocomplete_hint">프롬프트를 입력하는 동안 태그를 제안하고 수정합니다</string>
     <string name="tag_alias_label">별칭</string>
@@ -445,7 +445,7 @@
     <!-- Device link (remote control between two devices) -->
     <string name="remote_link">기기 연결</string>
     <string name="remote_host_section">호스트 모드(이 기기에서 모델 실행)</string>
-    <string name="remote_host_hint">같은 네트워크의 다른 Local Dream 기기가 이 기기의 모델을 탐색하고 이미지를 생성할 수 있게 합니다. 호스트 모드 동안 제어 포트(8808)와 생성 포트(8081)가 로컬 네트워크에 개방됩니다.</string>
+    <string name="remote_host_hint">같은 네트워크의 다른 Local Dream 기기가 이 기기의 모델을 탐색하고 이미지를 생성할 수 있게 합니다. 호스트 모드 동안 제어 포트(8818)와 생성 포트(8091)가 로컬 네트워크에 개방됩니다.</string>
     <string name="remote_host_start">호스트 모드 시작</string>
     <string name="remote_host_stop">호스트 모드 종료</string>
     <string name="remote_host_addresses">이 기기의 주소</string>

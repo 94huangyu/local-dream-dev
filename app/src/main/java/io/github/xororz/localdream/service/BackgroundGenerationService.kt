@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.remote.RemoteProtocol
 import io.github.xororz.localdream.utils.Http
 import java.io.BufferedReader
 import java.io.File
@@ -47,7 +48,7 @@ class BackgroundGenerationService : Service() {
         private const val CHANNEL_ID = "image_generation_channel"
         private const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "stop_generation"
-        const val LOCAL_BACKEND_HOST = "localhost:8081"
+        const val LOCAL_BACKEND_HOST = "localhost:${RemoteProtocol.GENERATION_PORT}"
 
         // Shared across generations; the long timeouts cover a single SDXL
         // request that can stream for many minutes.
@@ -598,7 +599,7 @@ class BackgroundGenerationService : Service() {
             .setContentTitle(this.getString(R.string.generating_notify))
             .setContentText("Progress: ${(progress * 100).toInt()}%")
             .setProgress(100, (progress * 100).toInt(), false)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setSmallIcon(R.drawable.ic_stat_zit)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()

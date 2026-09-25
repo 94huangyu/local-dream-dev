@@ -15,8 +15,13 @@ import org.json.JSONObject
  *    local generation.
  */
 object RemoteProtocol {
-    const val CONTROL_PORT = 8808
-    const val GENERATION_PORT = 8081
+    // The Z-Image edition installs beside upstream Local Dream (different
+    // applicationId), whose backend uses 8081/8808. Both backends bind the
+    // device's loopback, so this edition must use its own ports or one app's
+    // UI can end up talking to the other's backend. Every port reference in
+    // this app derives from these two constants.
+    const val CONTROL_PORT = 8818
+    const val GENERATION_PORT = 8091
     const val PROTOCOL_VERSION = 1
     const val APP_ID = "localdream"
 

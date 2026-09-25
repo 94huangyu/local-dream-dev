@@ -1,5 +1,39 @@
 # 交付态冻结快照
 
+## 〇、【2026-09-25】现网 = 本地梦-ZIT（versionCode 101）—— 以本节为准
+
+> 目的：与官方 Local Dream 3.x（包名 `io.github.xororz.localdream`）在同一台手机上并存。
+> **只改了上层**：应用名、图标、本地端口、导出目录。模型、契约、设备配置均未动。
+
+| 项 | 值 | 依据 |
+|---|---|---|
+| APK | `LocalDreamZImage_armv8a_2.8.1-zit.apk`（versionCode **101**） | 宿主构建 2026-09-25 19:49 |
+| APK sha256 | `444ac10f33f5e487ccfa48f973ac271b7267895b4eafebbc2a8b063d5fe61f94` | ① 设备 `sha256sum base.apk` 与宿主逐字节一致 |
+| `libstable_diffusion_core.so` sha256 | **`0357a043606d4970ba75120ccd71f20ee63cf15bad2bc71576458e365ca2ad38`** | ① 与被替换的 v100 **逐字节相同** ⇒ native / 数值路径未动 |
+| 包名 | `io.github.xororz.localdream.zimage`（官方为 `io.github.xororz.localdream`） | ① `aapt2 dump badging` |
+| 应用名 | `本地梦-ZIT`（所有语言） | ① `aapt2 dump badging` |
+| 后端端口 | 生成 **8091** / 受控 **8818**（官方 8081 / 8808） | ① 装后设备 `/proc/net/tcp`：`:1F9B` LISTEN，`:1F91` 无 |
+| 导出目录 | `Pictures/LocalDreamZImage`、`Downloads/LocalDreamZImage` | ③ **未在设备上实测**（代码改动见 `ImageUtils.kt` `PUBLIC_EXPORT_DIR`） |
+| 签名证书 | Android Debug，SHA-256 `22c13d4b…3ce46d` | ① `apksigner` 新旧一致 ⇒ `install -r` 原地升级 |
+| 回滚源 | `logs/apk_backup_20260925/base_v100_installed.apk`（sha256 `09c4a20a…acbb23`） | 装前从设备 `adb pull` |
+
+**交付验证（约束 11 四条铁律）**：
+
+| 步骤 | 结果 |
+|---|---|
+| ① 基线：装前用 **v100** 当场出图（`ZIT_PORT=8081 app_generate.sh`，seed 42，1024²） | sha256 `49be8e9a…83ad6` == 金标准 ✅，136.0 s |
+| ② 备份原件 | ✅ 见上表"回滚源" |
+| ③④ 装后在真实 app 里出图（`app_generate.sh`，端口 8091） | sha256 `49be8e9a…83ad6` == 金标准 ✅，133.9 s |
+| 装后模型仍在 | ✅ `files/models/ZIMAGE`、`ZIMAGE_sm8750_v2` 各 13 GB |
+
+🔴 **下面第一~三节是 2026-09-20 10:38 的快照，其"宿主侧产物"一节在当天就已过期**（本节 2026-09-25 查出）：
+10:38 冻结后，11:03 又装了一次 APK（`scratch_runs/p2s9/installed_d87e9670c06ff817.apk` 是装前备份），
+装上的才是 HANDOVER §15.50.1 记录的最终交付版（`.so` `0357a043…`，APK `09c4a20a…`，94,342,619 B）。
+⇒ 第一节的 APK / `.so` sha256（`d87e9670…` / `538c36c5…`）**不是**现网版本，保留原文仅供追溯。
+第二节的设备侧模型 sha256 与第三节的金标准出图 sha256 **仍有效**（今天两次出图均复现）。
+
+---
+
 > 由 `python scripts/freeze_delivery.py` **现读**生成，不抄任何文档里的旧值（约束 1）。
 > 冻结时间：**2026-09-20 10:38**
 

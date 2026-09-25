@@ -330,7 +330,7 @@ class RemoteHostService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.remote_host_notify_title))
             .setContentText(getString(R.string.remote_host_notify))
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setSmallIcon(R.drawable.ic_stat_zit)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()

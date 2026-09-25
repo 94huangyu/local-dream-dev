@@ -13,6 +13,10 @@ set -uo pipefail
 
 ADB="/c/Users/sinai/AppData/Local/Android/Sdk/platform-tools/adb.exe"
 PKG="io.github.xororz.localdream.zimage"
+# 🔴 2026-09-25：本版（versionCode 101）起后端端口 8081 → 8091，与官方 Local Dream（8081）并存。
+#    旧 APK（versionCode 100）仍是 8081 —— 端口必须与设备上装的版本一致。
+PORT="${ZIT_PORT:-8091}"
+PORT_HEX=$(printf ':%04X' "$PORT")
 OUTDIR="D:/LocalDreamZImage/scratch_runs"
 BASENAME="${1:?usage: app_generate.sh <basename> [seed] [prompt]}"
 SEED="${2:-42}"
@@ -62,7 +66,14 @@ foreground_clear() {
 
 port_up() {
   "$ADB" -s "$DEVICE" shell "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null" \
-    | awk '{print $2}' | grep -qi ':1F91'
+    | awk '{print $2}' | grep -qi "$PORT_HEX"
+}
+
+# 🔴 官方 Local Dream 的后端进程**同名**（libstable_diffusion_core.so），包名也含 localdream
+#    ⇒ 按进程名/子串判断会被它骗过。只认本包 uid 名下的进程。
+app_user() {
+  "$ADB" -s "$DEVICE" shell "ps -A -o USER,NAME" 2>/dev/null | tr -d '\r' \
+    | awk -v p="$PKG" '$2==p{print $1; exit}'
 }
 
 # 先长轮询：全新安装后首启要做契约校验(~119s)再加载 11GB 模型，
@@ -70,7 +81,7 @@ port_up() {
 if ! port_up; then
   # 只有在 app 进程**确实存在**时才值得长等（说明加载正在进行）；
   # 进程不在就直接进入下面的启动分支，别白等 15 分钟（2026-08-25 白等过一次）。
-  if "$ADB" -s "$DEVICE" shell "ps -A -o ARGS | grep -q '[l]ocaldream'" 2>/dev/null; then
+  if [ -n "$(app_user)" ]; then
     echo "backend 未监听但 app 进程在，等已在进行的加载（最多 15 分钟）..."
     for _ in $(seq 1 450); do port_up && break; sleep 2; done
   else
@@ -96,7 +107,11 @@ if ! port_up; then
   #    实测：手动点同一坐标立刻生效 ⇒ **不是坐标问题，是时序**。
   #    ⇒ 改为**重试点击直到后端进程出现**（后端一起来就说明点进模型页了）。
   backend_up() {
-    "$ADB" -s "$DEVICE" shell "pidof libstable_diffusion_core.so" 2>/dev/null | tr -d '\r' | grep -q '[0-9]'
+    local u
+    u=$(app_user)
+    [ -n "$u" ] || return 1
+    "$ADB" -s "$DEVICE" shell "ps -A -o USER,NAME" 2>/dev/null | tr -d '\r' \
+      | awk -v u="$u" '$1==u && $2 ~ /^libstable_diffu/ {f=1} END{exit !f}'
   }
   tapped=0
   for i in $(seq 1 20); do          # 最多 20 次 × 3 s = 60 s
@@ -110,8 +125,8 @@ if ! port_up; then
   # 后端起来之后才是真正漫长的加载（契约校验 + 模型），这时才值得长等
   for _ in $(seq 1 450); do port_up && break; sleep 2; done
 fi
-port_up || { echo "FAIL: 127.0.0.1:8081 始终未监听" >&2; exit 1; }
-echo "backend 就绪（8081 已监听）"
+port_up || { echo "FAIL: 127.0.0.1:$PORT 始终未监听" >&2; exit 1; }
+echo "backend 就绪（$PORT 已监听）"
 
 "$ADB" -s "$DEVICE" logcat -c
 "$ADB" -s "$DEVICE" logcat -v time > "$LOG" 2>&1 &
@@ -121,7 +136,7 @@ LOGCAT_PID=$!
 #    事后再 `logcat -d` 捞，设备环形缓冲早已滚过去。⇒ 先等几秒让 logcat 冲刷完再杀。
 trap 'sleep 4; kill $LOGCAT_PID 2>/dev/null' EXIT
 
-"$ADB" -s "$DEVICE" forward tcp:8081 tcp:8081 >/dev/null
+"$ADB" -s "$DEVICE" forward "tcp:$PORT" "tcp:$PORT" >/dev/null
 
 echo "请求生成（约 4 分钟）..."
 BODY=$(python -c 'import json,sys
@@ -129,7 +144,7 @@ d={"prompt": sys.argv[1], "seed": int(sys.argv[2]), "output_format": "png"}
 if len(sys.argv) > 4 and sys.argv[3] and sys.argv[4]:
     d["width"] = int(sys.argv[3]); d["height"] = int(sys.argv[4])
 print(json.dumps(d))' "$PROMPT" "$SEED" "$GEN_W" "$GEN_H")
-curl -sS -m 900 -X POST http://127.0.0.1:8081/generate \
+curl -sS -m 900 -X POST "http://127.0.0.1:$PORT/generate" \
   -H "Content-Type: application/json" -d "$BODY" -o "$SSE" \
   -w "HTTP %{http_code}  size %{size_download}B  time %{time_total}s\n"
 RC=$?
