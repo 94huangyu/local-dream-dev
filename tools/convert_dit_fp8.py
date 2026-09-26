@@ -14,6 +14,16 @@ its original dtype.
     # encoder, problems the app would reject it for); writes nothing:
     python tools/convert_dit_fp8.py --inspect some.safetensors
 
+    # Recommended: copy the per-layer precision of the file the app ships and
+    # the engine was validated with (only its header is downloaded):
+    python tools/convert_dit_fp8.py in.safetensors out.safetensors --like zimage
+    python tools/convert_dit_fp8.py in.safetensors out.safetensors --like klein4b
+
+    # Diagnose a converted file: layer-precision diff against the reference,
+    # and a numeric check of every tensor against the original:
+    python tools/convert_dit_fp8.py --inspect out.safetensors --like zimage
+    python tools/convert_dit_fp8.py out.safetensors --verify in.safetensors
+
 No PyTorch or GPU is needed. The input is memory-mapped and the output is
 streamed to disk one tensor at a time, so peak RAM stays around a few hundred
 MB even for a 12 GB checkpoint.
@@ -35,8 +45,10 @@ Supported inputs
 import argparse
 import json
 import re
+import os
 import struct
 import sys
+import urllib.request
 
 try:
     import ml_dtypes
@@ -164,6 +176,73 @@ class SafetensorsFile:
         return values
 
 
+# The FP8 files the app's built-in packages download, i.e. the layer layouts the
+# Hexagon engine has actually been validated with.
+REFERENCES = {
+    "zimage": "https://huggingface.co/Kijai/Z-Image_comfy_fp8_scaled/resolve/main/"
+              "z-image-turbo_fp8_scaled_e4m3fn_KJ.safetensors",
+    "klein4b": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/"
+               "flux-2-klein-4b-fp8.safetensors",
+}
+# Largest magnitude F16 can hold. The Hexagon backend stores BF16 weights as
+# F16, so any kept BF16 weight above this becomes inf on the NPU.
+F16_MAX = 65504.0
+
+
+def normalize_name(name):
+    """Name used to match tensors across files: no prefix, one scale spelling."""
+    if name.startswith(DIFFUSION_PREFIX):
+        name = name[len(DIFFUSION_PREFIX):]
+    if name.endswith(".scale_weight"):
+        name = name[: -len(".scale_weight")] + ".weight_scale"
+    return name
+
+
+def read_header(source):
+    """Tensor entries of a local .safetensors file or of a URL (header bytes only)."""
+    source = REFERENCES.get(source, source)
+    if source.startswith(("http://", "https://")):
+        headers = {"User-Agent": "convert_dit_fp8"}
+        if os.environ.get("HF_TOKEN"):
+            headers["Authorization"] = "Bearer " + os.environ["HF_TOKEN"]
+
+        def fetch(start, length):
+            request = urllib.request.Request(
+                source, headers=dict(headers, Range=f"bytes={start}-{start + length - 1}"))
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    if response.status == 200 and start > 0:
+                        # Range ignored: skip ahead without keeping the bytes.
+                        response.read(start)
+                    return response.read(length)
+            except OSError as e:
+                sys.exit(f"cannot download the header of {source}: {e}\n"
+                         "(gated repositories need HF_TOKEN set to a Hugging Face token)")
+
+        (size,) = struct.unpack("<Q", fetch(0, 8))
+        raw = fetch(8, size)
+    else:
+        with open(source, "rb") as f:
+            (size,) = struct.unpack("<Q", f.read(8))
+            if size > 256 << 20:
+                sys.exit(f"{source}: not a safetensors file")
+            raw = f.read(size)
+    header = json.loads(raw)
+    header.pop("__metadata__", None)
+    return header
+
+
+def reference_layout(source):
+    """normalized name -> (dtype, shape) for the weights of a reference file."""
+    layout = {}
+    for name, info in read_header(source).items():
+        norm = normalize_name(name)
+        if norm.endswith(SCALE_SUFFIXES) or norm in MARKER_KEYS:
+            continue
+        layout[norm] = (info["dtype"], tuple(info["shape"]))
+    return layout
+
+
 class Output:
     """One output tensor: its dtype, shape and how to produce its bytes."""
 
@@ -227,15 +306,28 @@ def plan_sources(src):
     return sources
 
 
-def build_outputs(src, sources, check):
+def build_outputs(src, sources, check, reference=None):
     outputs = {}
-    stats = {"converted": 0, "kept": 0, "worst": 0.0}
+    stats = {"converted": 0, "kept": 0, "worst": 0.0, "not_in_reference": [], "shape_differs": 0}
 
     for out_name, parts in sources.items():
         dtype = src.dtype(parts[0])
         shape = list(src.shape(parts[0]))
         if len(parts) > 1:
             shape[0] = sum(src.shape(p)[0] for p in parts)
+
+        # With a reference, every tensor takes the reference's dtype: FP8 where
+        # it is FP8 and the same BF16/F16/F32 elsewhere, so the engine sees the
+        # exact op/dtype mix it was validated on.
+        target = None
+        if reference is not None:
+            ref = reference.get(normalize_name(out_name))
+            if ref is None:
+                stats["not_in_reference"].append(out_name)
+            else:
+                target = ref[0]
+                if tuple(ref[1]) != tuple(shape):
+                    stats["shape_differs"] += 1
 
         def load(parts=parts):
             if len(parts) == 1:
@@ -248,7 +340,9 @@ def build_outputs(src, sources, check):
         if dtype == "U8" and out_name.endswith(".weight"):
             sys.exit(f"{out_name}: packed U8 weights (NVFP4/MXFP4 style) are not supported; "
                      "use the BF16 or FP8 release of this model")
-        if (dtype in FLOAT_TYPES or dtype == "I8") and should_quantize(out_name, shape):
+        wants_fp8 = (target == "F8_E4M3") if target is not None else (
+            reference is None and should_quantize(out_name, shape))
+        if (dtype in FLOAT_TYPES or dtype == "I8") and wants_fp8:
             # The header needs every scale before any data is written, so the
             # scales are computed in this first pass and each weight is read
             # (and quantized) again while streaming, instead of holding all
@@ -270,6 +364,12 @@ def build_outputs(src, sources, check):
             outputs[out_name[: -len(".weight")] + ".weight_scale"] = Output(
                 "F32", [1], lambda b=scale_bytes: b)
             stats["converted"] += 1
+        elif (target in ("BF16", "F16", "F32") and target != dtype
+              and (dtype in FLOAT_TYPES or dtype == "I8")):
+            outputs[out_name] = Output(
+                target, shape,
+                lambda load=load, t=DTYPES[target]: load().astype(t).tobytes())
+            stats["kept"] += 1
         elif dtype in SCALED_TYPES:
             # A scaled tensor outside the blocks: restore it to BF16.
             outputs[out_name] = Output(
@@ -385,6 +485,81 @@ def write_safetensors(path, outputs, metadata):
     return offset
 
 
+def compare_layout(src, reference):
+    """Prints where a file's per-tensor dtypes differ from a reference layout."""
+    mine = {}
+    for name in src.entries:
+        norm = normalize_name(name)
+        if norm.endswith(SCALE_SUFFIXES) or norm in MARKER_KEYS:
+            continue
+        mine[norm] = (src.dtype(name), tuple(src.shape(name)))
+    differ = [(n, mine[n][0], reference[n][0]) for n in mine
+              if n in reference and mine[n][0] != reference[n][0]]
+    only_mine = [n for n in mine if n not in reference]
+    only_ref = [n for n in reference if n not in mine]
+    shapes = sum(1 for n in mine if n in reference and mine[n][1] != reference[n][1])
+    print("  layout vs reference:")
+    print(f"    same dtype      : {len(mine) - len(only_mine) - len(differ)} tensors")
+    print(f"    different dtype : {len(differ)} tensors")
+    for n, d_mine, d_ref in differ[:15]:
+        print(f"      {n}: {d_mine} here, {d_ref} in reference")
+    if len(differ) > 15:
+        print(f"      ... and {len(differ) - 15} more")
+    if only_mine:
+        print(f"    only here       : {len(only_mine)} tensors, e.g. {only_mine[:3]}")
+    if only_ref:
+        print(f"    only in reference: {len(only_ref)} tensors, e.g. {only_ref[:3]}")
+    if shapes:
+        print(f"    different shape : {shapes} tensors (a different model size than the reference)")
+
+
+def verify(converted, original):
+    """Numeric check of a converted file against the file it was made from."""
+    sources = plan_sources(original)
+    bad = []
+    worst = (0.0, None)
+    overflow = []
+    checked = 0
+    for name in converted.entries:
+        norm = normalize_name(name)
+        if norm.endswith(SCALE_SUFFIXES) or norm in MARKER_KEYS:
+            continue
+        dtype = converted.dtype(name)
+        if dtype not in FLOAT_TYPES:
+            continue
+        mine = converted.as_float32(name)
+        if not np.all(np.isfinite(mine)):
+            bad.append(f"{name}: contains NaN/Inf")
+            continue
+        if dtype in ("BF16", "F32") and mine.size and float(np.max(np.abs(mine))) > F16_MAX:
+            overflow.append(name)
+        parts = sources.get(name)
+        if parts is None:
+            continue
+        ref = (original.as_float32(parts[0]) if len(parts) == 1 else
+               np.concatenate([original.as_float32(p) for p in parts], axis=0))
+        if ref.shape != mine.shape:
+            bad.append(f"{name}: shape {list(mine.shape)} vs original {list(ref.shape)}")
+            continue
+        err = float(np.linalg.norm(mine - ref) / max(float(np.linalg.norm(ref)), 1e-12))
+        checked += 1
+        if err > worst[0]:
+            worst = (err, name)
+        if err > 0.10:
+            bad.append(f"{name}: relative error {err:.1%} against the original")
+    print(f"verified {checked} tensors against the original")
+    if worst[1]:
+        print(f"  worst relative error: {worst[0]:.2%} ({worst[1]})")
+    for line in bad[:20]:
+        print(f"  PROBLEM: {line}")
+    if len(bad) > 20:
+        print(f"  ... and {len(bad) - 20} more problems")
+    for name in overflow[:10]:
+        print(f"  PROBLEM: {name} exceeds the F16 range; the NPU stores it as F16, so it becomes inf")
+    if not bad and not overflow:
+        print("  OK: the converted weights match the original (FP8 rounding only)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -394,16 +569,34 @@ def main():
                         help="print the relative quantization error of every converted tensor")
     parser.add_argument("--inspect", action="store_true",
                         help="only describe the input file; write nothing")
+    parser.add_argument("--like", metavar="REF",
+                        help="copy the per-tensor precision of a reference file: 'zimage', "
+                             "'klein4b', a local .safetensors or a URL (header only)")
+    parser.add_argument("--verify", metavar="ORIGINAL",
+                        help="check the input (a converted file) against the file it was made from")
     args = parser.parse_args()
 
     src = SafetensorsFile(args.input)
-    if args.inspect:
+    reference = reference_layout(args.like) if args.like else None
+    if args.inspect or args.verify:
         print_report(args.input, describe(src))
+        if reference is not None:
+            compare_layout(src, reference)
+        if args.verify:
+            print()
+            verify(src, SafetensorsFile(args.verify))
         return
     if not args.output:
-        parser.error("an output path is required unless --inspect is given")
+        parser.error("an output path is required unless --inspect or --verify is given")
     sources = plan_sources(src)
-    outputs, stats = build_outputs(src, sources, args.check)
+    outputs, stats = build_outputs(src, sources, args.check, reference)
+    if reference is not None:
+        if stats["not_in_reference"]:
+            print(f"warning: {len(stats['not_in_reference'])} tensors are not in the reference "
+                  f"and keep their dtype, e.g. {stats['not_in_reference'][:3]}")
+        if stats["shape_differs"]:
+            print(f"note: {stats['shape_differs']} tensors differ in shape from the reference "
+                  "(a different model size); only the per-layer precision is copied")
     if stats["converted"] == 0:
         sys.exit("no transformer-block linear weights matched; "
                  "is this a Z-Image or FLUX.2 Klein DiT?")
@@ -417,7 +610,10 @@ def main():
     if args.check:
         print(f"worst relative error: {stats['worst']:.4%}")
     print()
-    print_report(args.output, describe(SafetensorsFile(args.output)))
+    out = SafetensorsFile(args.output)
+    print_report(args.output, describe(out))
+    if reference is not None:
+        compare_layout(out, reference)
 
 
 if __name__ == "__main__":
