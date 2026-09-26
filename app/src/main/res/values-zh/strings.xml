@@ -307,6 +307,7 @@
     <string name="dit_import_error_format">不是 safetensors 或 GGUF 文件</string>
     <string name="dit_import_error_e5m2">不支持 FP8 E5M2 权重，请先转换为 FP8 E4M3。</string>
     <string name="dit_import_error_int8">不支持 INT8 量化权重，请使用 FP8 E4M3 或 BF16 权重。</string>
+    <string name="dit_import_error_text_encoder">这个 DiT 需要 %1$s 文本编码器（FLUX.2 Klein 9B 的微调模型需要 Qwen3-8B），不能用内置的 Qwen3-4B。请在「文本编码器」一栏选择匹配的 llm.gguf。</string>
     <string name="dit_import_error_bundled">该模型文件还包含文本编码器或 VAE，请只导入扩散模型部分。</string>
     <string name="dit_import_error_kind">这些权重看起来是 %1$s，而不是 %2$s</string>
     <string name="copying_model_file">复制模型文件中…</string>

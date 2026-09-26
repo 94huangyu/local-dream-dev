@@ -307,6 +307,7 @@
     <string name="dit_import_error_format">safetensors または GGUF ファイルではありません</string>
     <string name="dit_import_error_e5m2">FP8 E5M2 の重みには対応していません。先に FP8 E4M3 に変換してください。</string>
     <string name="dit_import_error_int8">INT8 量子化の重みには対応していません。FP8 E4M3 または BF16 の重みを使ってください。</string>
+    <string name="dit_import_error_text_encoder">この DiT には %1$s のテキストエンコーダーが必要です（FLUX.2 Klein 9B のファインチューンには Qwen3-8B が必要）。内蔵の Qwen3-4B は使えません。テキストエンコーダーに対応する llm.gguf を選択してください。</string>
     <string name="dit_import_error_bundled">このチェックポイントにはテキストエンコーダーまたは VAE も含まれています。拡散モデルのみをインポートしてください。</string>
     <string name="dit_import_error_kind">この重みは %2$s ではなく %1$s のようです</string>
     <string name="copying_model_file">モデルファイルをコピーしています…</string>

@@ -10,6 +10,10 @@ its original dtype.
     pip install numpy ml_dtypes
     python tools/convert_dit_fp8.py input.safetensors output_fp8.safetensors
 
+    # Only report what a file is (architecture, dtypes, required text
+    # encoder, problems the app would reject it for); writes nothing:
+    python tools/convert_dit_fp8.py --inspect some.safetensors
+
 No PyTorch or GPU is needed. The input is memory-mapped and the output is
 streamed to disk one tensor at a time, so peak RAM stays around a few hundred
 MB even for a 12 GB checkpoint.
@@ -23,6 +27,9 @@ Supported inputs
   * All-in-one checkpoints: only the "model.diffusion_model." part is kept.
   * Inputs that are already FP8 (E4M3 or E5M2, with or without scales) are
     dequantized and requantized, which also makes E5M2 files loadable.
+  * ComfyUI int8_tensorwise layers are dequantized and requantized.
+    ConvRot int8 and packed 4-bit formats (NVFP4/MXFP4) are rejected: use the
+    BF16 or FP8 release of the model instead.
 """
 
 import argparse
@@ -56,6 +63,8 @@ DTYPES = {
 }
 FLOAT_TYPES = {"F64", "F32", "F16", "BF16", "F8_E4M3", "F8_E5M2"}
 FP8_TYPES = {"F8_E4M3", "F8_E5M2"}
+# Weight dtypes that carry a separate dequantization scale.
+SCALED_TYPES = FP8_TYPES | {"I8"}
 
 # Linear weights inside the transformer blocks: the bulk of the parameters and
 # what the engine's FP8 matmul accelerates. Norms, modulation, embedders and
@@ -71,7 +80,7 @@ QUANTIZE_PATTERNS = [
 ]
 
 # Scale tensors and markers of an FP8 input; they are rebuilt, not copied.
-SCALE_SUFFIXES = (".scale_weight", ".weight_scale", ".input_scale", ".scale_input")
+SCALE_SUFFIXES = (".scale_weight", ".weight_scale", ".input_scale", ".scale_input", ".comfy_quant")
 MARKER_KEYS = {"scaled_fp8"}
 
 # Diffusers -> original names for Z-Image, mirroring what stable-diffusion.cpp
@@ -115,15 +124,43 @@ class SafetensorsFile:
             sys.exit(f"unsupported dtype {dtype} for tensor {name}")
         return self.raw(name).view(DTYPES[dtype]).reshape(self.shape(name))
 
+    def comfy_quant(self, module):
+        """The ComfyUI quantization config of a module, or None."""
+        name = module + ".comfy_quant"
+        if name not in self.entries:
+            return None
+        try:
+            return json.loads(bytes(self.raw(name)).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            sys.exit(f"unreadable ComfyUI quantization metadata: {name}")
+
     def as_float32(self, name):
-        """The tensor in float32, with any stored FP8 dequantization scale applied."""
+        """The tensor in float32, with any stored dequantization scale applied."""
+        dtype = self.dtype(name)
         values = self.array(name).astype(np.float32)
-        if self.dtype(name) in FP8_TYPES and name.endswith(".weight"):
-            module = name[: -len(".weight")]
-            for suffix in (".scale_weight", ".weight_scale"):
-                if module + suffix in self.entries:
-                    values *= self.array(module + suffix).astype(np.float32)
-                    break
+        if dtype not in SCALED_TYPES or not name.endswith(".weight"):
+            return values
+        module = name[: -len(".weight")]
+        if dtype == "I8":
+            config = self.comfy_quant(module) or {}
+            if config.get("convrot"):
+                sys.exit(f"{name}: ConvRot int8 weights cannot be converted; "
+                         "use the BF16 or FP8 release of this model")
+        for suffix in (".scale_weight", ".weight_scale"):
+            if module + suffix not in self.entries:
+                continue
+            scale = self.array(module + suffix).astype(np.float32)
+            if scale.size == 1:
+                values *= float(scale.reshape(-1)[0])
+            elif values.ndim == 2 and scale.size == values.shape[0]:
+                # One scale per output row: broadcast along the input axis.
+                values *= scale.reshape(-1, 1)
+            else:
+                sys.exit(f"{name}: unsupported scale shape {list(scale.shape)} "
+                         f"for weight shape {list(values.shape)}")
+            return values
+        if dtype == "I8":
+            sys.exit(f"{name}: int8 weight without a scale cannot be converted")
         return values
 
 
@@ -205,7 +242,13 @@ def build_outputs(src, sources, check):
                 return src.as_float32(parts[0])
             return np.concatenate([src.as_float32(p) for p in parts], axis=0)
 
-        if dtype in FLOAT_TYPES and should_quantize(out_name, shape):
+        if dtype not in DTYPES:
+            sys.exit(f"{out_name}: unsupported dtype {dtype} (packed 4-bit formats such as "
+                     "NVFP4/MXFP4 are not supported); use the BF16 or FP8 release")
+        if dtype == "U8" and out_name.endswith(".weight"):
+            sys.exit(f"{out_name}: packed U8 weights (NVFP4/MXFP4 style) are not supported; "
+                     "use the BF16 or FP8 release of this model")
+        if (dtype in FLOAT_TYPES or dtype == "I8") and should_quantize(out_name, shape):
             # The header needs every scale before any data is written, so the
             # scales are computed in this first pass and each weight is read
             # (and quantized) again while streaming, instead of holding all
@@ -227,8 +270,8 @@ def build_outputs(src, sources, check):
             outputs[out_name[: -len(".weight")] + ".weight_scale"] = Output(
                 "F32", [1], lambda b=scale_bytes: b)
             stats["converted"] += 1
-        elif dtype in FP8_TYPES:
-            # An FP8 tensor outside the blocks: restore it to BF16.
+        elif dtype in SCALED_TYPES:
+            # A scaled tensor outside the blocks: restore it to BF16.
             outputs[out_name] = Output(
                 "BF16", shape, lambda load=load: load().astype(ml_dtypes.bfloat16).tobytes())
             stats["kept"] += 1
@@ -241,6 +284,84 @@ def build_outputs(src, sources, check):
             outputs[out_name] = Output(dtype, shape, lambda p=parts[0]: bytes(src.raw(p)))
             stats["kept"] += 1
     return outputs, stats
+
+
+# Hidden size of the text encoders the built-in packages ship (Qwen3-4B).
+BUILTIN_TE_HIDDEN = 2560
+TE_BY_HIDDEN = {2560: "Qwen3-4B", 4096: "Qwen3-8B"}
+BUNDLED_PREFIXES = ("first_stage_model.", "cond_stage_model.", "conditioner.",
+                    "text_encoders.", "text_encoder.", "vae.")
+
+
+def describe(src):
+    """Architecture, text-encoder requirement and app-import problems of a file."""
+    names = [n for n in src.entries]
+
+    def find(*suffixes):
+        return next((n for n in names if n.endswith(suffixes)), None)
+
+    report = {"arch": "unknown", "te_hidden": None, "problems": [], "notes": []}
+    if any("cap_embedder." in n for n in names):
+        report["arch"] = "Z-Image"
+        key = find("cap_embedder.1.weight")
+        if key:
+            report["te_hidden"] = src.shape(key)[-1]
+    elif any("double_stream_modulation_img" in n for n in names):
+        big = any("single_blocks.47." in n for n in names)
+        report["arch"] = "FLUX.2 dev" if big else "FLUX.2 Klein"
+        key = find("txt_in.weight", "context_embedder.weight")
+        if key:
+            report["te_hidden"] = src.shape(key)[-1] // 3
+        if big:
+            report["problems"].append("FLUX.2 dev is not one of the app's DiT kinds")
+    elif any("txt_in.text_norm" in n for n in names):
+        report["arch"] = "Qwen Image 2.1"
+    else:
+        report["problems"].append("no Z-Image / FLUX.2 Klein / Qwen Image 2.1 tensor names found")
+
+    te = report["te_hidden"]
+    if te is not None and te != BUILTIN_TE_HIDDEN:
+        report["problems"].append(
+            f"needs a {TE_BY_HIDDEN.get(te, f'{te}-dim')} text encoder; the built-in "
+            f"{TE_BY_HIDDEN[BUILTIN_TE_HIDDEN]} llm.gguf will not work, so choose a matching "
+            "llm.gguf for the text encoder when importing")
+
+    dtypes = {}
+    for n in names:
+        dtypes[src.dtype(n)] = dtypes.get(src.dtype(n), 0) + 1
+    report["dtypes"] = dtypes
+    if "F8_E5M2" in dtypes:
+        report["problems"].append("contains FP8 E5M2 weights: convert this file")
+    if "I8" in dtypes:
+        report["problems"].append("contains INT8 weights: convert this file")
+    if any(d not in DTYPES for d in dtypes):
+        report["problems"].append(f"unsupported dtypes {sorted(d for d in dtypes if d not in DTYPES)}")
+    if any(n.startswith(BUNDLED_PREFIXES) for n in names):
+        report["problems"].append("bundles a text encoder or VAE: convert this file to extract the DiT")
+
+    fp8 = dtypes.get("F8_E4M3", 0)
+    if fp8 and any(n.endswith((".weight_scale", ".scale_weight")) for n in names):
+        report["notes"].append("already FP8 E4M3 with scales (the fast format)")
+    elif fp8:
+        report["notes"].append("FP8 E4M3 without scales (loads, but converting adds scales)")
+    elif dtypes.get("BF16", 0) or dtypes.get("F16", 0):
+        report["notes"].append("BF16/F16: convert it for speed and to halve the size")
+    return report
+
+
+def print_report(path, report):
+    print(f"{path}")
+    print(f"  architecture : {report['arch']}")
+    if report["te_hidden"] is not None:
+        te = report["te_hidden"]
+        print(f"  text encoder : {TE_BY_HIDDEN.get(te, 'unknown')} (hidden size {te})")
+    print(f"  tensor dtypes: {report['dtypes']}")
+    for note in report["notes"]:
+        print(f"  note         : {note}")
+    for problem in report["problems"]:
+        print(f"  PROBLEM      : {problem}")
+    if not report["problems"]:
+        print("  import       : OK for the app's DiT import")
 
 
 def write_safetensors(path, outputs, metadata):
@@ -268,12 +389,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("input", help="source .safetensors (BF16/FP16/FP32 or FP8)")
-    parser.add_argument("output", help="destination .safetensors")
+    parser.add_argument("output", nargs="?", help="destination .safetensors")
     parser.add_argument("--check", action="store_true",
                         help="print the relative quantization error of every converted tensor")
+    parser.add_argument("--inspect", action="store_true",
+                        help="only describe the input file; write nothing")
     args = parser.parse_args()
 
     src = SafetensorsFile(args.input)
+    if args.inspect:
+        print_report(args.input, describe(src))
+        return
+    if not args.output:
+        parser.error("an output path is required unless --inspect is given")
     sources = plan_sources(src)
     outputs, stats = build_outputs(src, sources, args.check)
     if stats["converted"] == 0:
@@ -288,6 +416,8 @@ def main():
     print(f"{src.data.size / 2**30:.2f} GiB -> {total / 2**30:.2f} GiB, written to {args.output}")
     if args.check:
         print(f"worst relative error: {stats['worst']:.4%}")
+    print()
+    print_report(args.output, describe(SafetensorsFile(args.output)))
 
 
 if __name__ == "__main__":

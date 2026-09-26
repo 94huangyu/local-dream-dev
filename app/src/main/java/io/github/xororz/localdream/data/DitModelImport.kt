@@ -44,6 +44,12 @@ object DitModelImport {
     // A safetensors header is a JSON index; anything larger is not one.
     private const val MAX_SAFETENSORS_HEADER_BYTES = 64L shl 20
 
+    // Hidden size of the Qwen3-4B text encoder every built-in Z-Image and
+    // FLUX.2 Klein package ships. A fine-tune of a bigger variant (e.g. Klein
+    // 9B, Qwen3-8B) fails deep inside the engine with the built-in one.
+    private const val BUILTIN_TEXT_ENCODER_HIDDEN = 2560
+    private val TEXT_ENCODER_NAMES = mapOf(2560 to "Qwen3-4B", 4096 to "Qwen3-8B")
+
     // Left free after the copy so the import cannot fill the device.
     private const val FREE_SPACE_MARGIN_BYTES = 512L shl 20
 
@@ -74,6 +80,10 @@ object DitModelImport {
         // Tensor-name fragment unique to this architecture, matched against
         // both ComfyUI and diffusers key layouts.
         val signature: String,
+        // Weight whose input width is the text features the DiT consumes, and
+        // how many text-encoder hidden states those features stack.
+        val textFeatureKeys: List<String> = emptyList(),
+        val textFeaturesPerHidden: Int = 1,
     ) {
         Z_IMAGE(
             "zimage",
@@ -81,6 +91,7 @@ object DitModelImport {
             "z_image_turbo",
             listOf(Component.TEXT_ENCODER, Component.VAE, Component.TOKENIZER),
             "cap_embedder.",
+            listOf("cap_embedder.1.weight"),
         ),
         FLUX2_KLEIN(
             "klein",
@@ -88,6 +99,9 @@ object DitModelImport {
             "flux2_klein_4b",
             listOf(Component.TEXT_ENCODER, Component.VAE, Component.TOKENIZER),
             "double_stream_modulation_img",
+            // Klein stacks three Qwen3 hidden states (layers 9, 18, 27).
+            listOf("txt_in.weight", "context_embedder.weight"),
+            3,
         ),
         QWEN_IMAGE_2_1(
             "qwen21",
@@ -180,7 +194,12 @@ object DitModelImport {
         if (modelDir.exists()) throw ImportException(context.getString(R.string.rename_name_exists))
 
         onStage(context.getString(R.string.dit_import_checking))
-        val format = inspectDit(context, ditUri, kind)
+        val format = inspectDit(
+            context,
+            ditUri,
+            kind,
+            customTextEncoder = Component.TEXT_ENCODER in pickedComponents,
+        )
 
         // Resolve every source before writing anything.
         val copies = mutableListOf(ditUri to File(modelDir, format.fileName))
@@ -252,7 +271,7 @@ object DitModelImport {
      * returns their container format. Only safetensors headers are inspected
      * beyond the magic; GGUF metadata is left to the engine.
      */
-    private fun inspectDit(context: Context, uri: Uri, kind: Kind): WeightFormat {
+    private fun inspectDit(context: Context, uri: Uri, kind: Kind, customTextEncoder: Boolean): WeightFormat {
         val input = context.contentResolver.openInputStream(uri)
             ?: throw ImportException(context.getString(R.string.cannot_open_file))
         return input.use { stream ->
@@ -273,12 +292,18 @@ object DitModelImport {
             } catch (_: JSONException) {
                 throw ImportException(context.getString(R.string.dit_import_error_format))
             }
-            checkSafetensorsHeader(context, header, kind)
+            checkSafetensorsHeader(context, header, kind, customTextEncoder)
             WeightFormat.SAFETENSORS
         }
     }
 
-    private fun checkSafetensorsHeader(context: Context, header: JSONObject, kind: Kind) {
+    private fun checkSafetensorsHeader(
+        context: Context,
+        header: JSONObject,
+        kind: Kind,
+        customTextEncoder: Boolean,
+    ) {
+        var textFeatures: Int? = null
         var hasE5m2 = false
         var hasInt8 = false
         var bundled = false
@@ -294,6 +319,11 @@ object DitModelImport {
             }
             if (BUNDLED_PREFIXES.any { key.startsWith(it) }) bundled = true
             Kind.entries.filterTo(detected) { key.contains(it.signature) }
+            if (textFeatures == null && kind.textFeatureKeys.any { key.endsWith(it) }) {
+                // safetensors shapes are [out, in]; the input width is the text features.
+                val shape = header.optJSONObject(key)?.optJSONArray("shape")
+                if (shape != null && shape.length() == 2) textFeatures = shape.optInt(1)
+            }
         }
         if (hasE5m2) throw ImportException(context.getString(R.string.dit_import_error_e5m2))
         if (hasInt8) throw ImportException(context.getString(R.string.dit_import_error_int8))
@@ -306,6 +336,15 @@ object DitModelImport {
                     R.string.dit_import_error_kind,
                     detected.first().displayName,
                     kind.displayName,
+                ),
+            )
+        }
+        val requiredHidden = textFeatures?.div(kind.textFeaturesPerHidden)
+        if (!customTextEncoder && requiredHidden != null && requiredHidden != BUILTIN_TEXT_ENCODER_HIDDEN) {
+            throw ImportException(
+                context.getString(
+                    R.string.dit_import_error_text_encoder,
+                    TEXT_ENCODER_NAMES[requiredHidden] ?: "$requiredHidden-dim",
                 ),
             )
         }

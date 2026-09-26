@@ -317,6 +317,7 @@
     <string name="dit_import_error_format">Not a safetensors or GGUF file</string>
     <string name="dit_import_error_e5m2">FP8 E5M2 weights are not supported. Convert them to FP8 E4M3 first.</string>
     <string name="dit_import_error_int8">INT8-quantized weights are not supported. Use FP8 E4M3 or BF16 weights.</string>
+    <string name="dit_import_error_text_encoder">This DiT needs a %1$s text encoder (a FLUX.2 Klein 9B fine-tune needs Qwen3-8B), not the built-in Qwen3-4B. Choose a matching llm.gguf for the text encoder.</string>
     <string name="dit_import_error_bundled">This checkpoint also contains the text encoder or VAE. Import the diffusion model on its own.</string>
     <string name="dit_import_error_kind">These weights look like %1$s, not %2$s</string>
     <string name="copying_model_file">Copying model file…</string>
