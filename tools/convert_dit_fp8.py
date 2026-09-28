@@ -501,8 +501,27 @@ def describe(src):
     elif fp8:
         report["notes"].append("FP8 E4M3 without scales (loads, but converting adds scales)")
     elif dtypes.get("BF16", 0) or dtypes.get("F16", 0):
-        report["notes"].append("BF16/F16: convert it for speed and to halve the size")
+        if not klein9b(report):
+            report["notes"].append("BF16/F16: convert it for speed and to halve the size")
+    if klein9b(report):
+        report["notes"].append(KLEIN9B_FP8_NOTE)
     return report
+
+
+# FLUX.2 Klein 9B (Qwen3-8B text features) in FP8 renders green noise on the
+# NPU: checked on SM8750 with a fine-tune whose FP8 file matched BFL's 4B
+# layout and scale convention and passed --verify, while the same weights as a
+# Q4_0 GGUF render correctly on the NPU and correctly on a Mac build of the
+# engine. That points at the NPU FP8 matmul at 9B shapes (hidden 4096, single
+# block K 16384), not at the conversion. Until that is fixed, use Q4_0.
+KLEIN9B_FP8_NOTE = (
+    "IMPORTANT: FLUX.2 Klein 9B in FP8 renders green noise on the NPU; import a "
+    "Q4_0 GGUF instead (renders correctly): sd-cli -M convert --diffusion-model "
+    "IN.safetensors -o OUT.gguf --type q4_0")
+
+
+def klein9b(report):
+    return report["arch"] == "FLUX.2 Klein" and report["te_hidden"] == 4096
 
 
 def print_report(path, report):
@@ -638,6 +657,9 @@ def main():
     parser.add_argument("--scale-convention", choices=["unit", "max448"],
                         help="FP8 scale convention (default: unit for Z-Image like Kijai's "
                              "built-in file, max448 for FLUX.2 Klein like BFL's)")
+    parser.add_argument("--force", action="store_true",
+                        help="convert even a model known not to run correctly in FP8 "
+                             "(FLUX.2 Klein 9B)")
     args = parser.parse_args()
 
     src = SafetensorsFile(args.input)
@@ -655,6 +677,9 @@ def main():
         return
     if not args.output:
         parser.error("an output path is required unless --inspect or --verify is given")
+    if klein9b(describe(src)) and not args.force:
+        sys.exit(KLEIN9B_FP8_NOTE + "\n(pass --force to write the FP8 file anyway, "
+                 "e.g. to test an engine fix)")
     sources = plan_sources(src)
     outputs, stats = build_outputs(src, sources, args.check, reference)
     if reference is not None:
