@@ -232,15 +232,48 @@ def read_header(source):
     return header
 
 
+BLOCK_INDEX = re.compile(r"\.\d+\.")
+
+
+class ReferenceLayout:
+    """Per-tensor dtypes (and shapes) of a reference file.
+
+    A tensor the reference lacks by name, typically a block a bigger variant
+    has and the reference does not (Klein 9B against the 4B file), takes the
+    dtype the reference uses for that role in every other block, e.g.
+    single_blocks.#.linear1.weight."""
+
+    def __init__(self, source):
+        self.exact = {}
+        roles = {}
+        for name, info in read_header(source).items():
+            norm = normalize_name(name)
+            if norm.endswith(SCALE_SUFFIXES) or norm in MARKER_KEYS:
+                continue
+            self.exact[norm] = (info["dtype"], tuple(info["shape"]))
+            roles.setdefault(BLOCK_INDEX.sub(".#.", norm), set()).add(info["dtype"])
+        # Only roles every block agrees on can stand in for a missing block.
+        self.roles = {role: dtypes.pop() for role, dtypes in roles.items() if len(dtypes) == 1}
+
+    def __contains__(self, name):
+        return name in self.exact
+
+    def __getitem__(self, name):
+        return self.exact[name]
+
+    def __iter__(self):
+        return iter(self.exact)
+
+    def get(self, name):
+        """(dtype, shape or None) for a normalized name, or None if unknown."""
+        if name in self.exact:
+            return self.exact[name]
+        dtype = self.roles.get(BLOCK_INDEX.sub(".#.", name))
+        return (dtype, None) if dtype is not None else None
+
+
 def reference_layout(source):
-    """normalized name -> (dtype, shape) for the weights of a reference file."""
-    layout = {}
-    for name, info in read_header(source).items():
-        norm = normalize_name(name)
-        if norm.endswith(SCALE_SUFFIXES) or norm in MARKER_KEYS:
-            continue
-        layout[norm] = (info["dtype"], tuple(info["shape"]))
-    return layout
+    return ReferenceLayout(source)
 
 
 class Output:
@@ -308,7 +341,8 @@ def plan_sources(src):
 
 def build_outputs(src, sources, check, reference=None):
     outputs = {}
-    stats = {"converted": 0, "kept": 0, "worst": 0.0, "not_in_reference": [], "shape_differs": 0}
+    stats = {"converted": 0, "kept": 0, "worst": 0.0, "not_in_reference": [], "shape_differs": 0,
+             "matched_by_role": 0}
 
     for out_name, parts in sources.items():
         dtype = src.dtype(parts[0])
@@ -326,7 +360,9 @@ def build_outputs(src, sources, check, reference=None):
                 stats["not_in_reference"].append(out_name)
             else:
                 target = ref[0]
-                if tuple(ref[1]) != tuple(shape):
+                if ref[1] is None:
+                    stats["matched_by_role"] += 1
+                elif tuple(ref[1]) != tuple(shape):
                     stats["shape_differs"] += 1
 
         def load(parts=parts):
@@ -421,8 +457,8 @@ def describe(src):
 
     te = report["te_hidden"]
     if te is not None and te != BUILTIN_TE_HIDDEN:
-        report["problems"].append(
-            f"needs a {TE_BY_HIDDEN.get(te, f'{te}-dim')} text encoder; the built-in "
+        report["notes"].append(
+            f"IMPORTANT: needs a {TE_BY_HIDDEN.get(te, f'{te}-dim')} text encoder; the built-in "
             f"{TE_BY_HIDDEN[BUILTIN_TE_HIDDEN]} llm.gguf will not work, so choose a matching "
             "llm.gguf for the text encoder when importing")
 
@@ -493,9 +529,14 @@ def compare_layout(src, reference):
         if norm.endswith(SCALE_SUFFIXES) or norm in MARKER_KEYS:
             continue
         mine[norm] = (src.dtype(name), tuple(src.shape(name)))
-    differ = [(n, mine[n][0], reference[n][0]) for n in mine
-              if n in reference and mine[n][0] != reference[n][0]]
-    only_mine = [n for n in mine if n not in reference]
+    differ = []
+    only_mine = []
+    for n in mine:
+        ref = reference.get(n)
+        if ref is None:
+            only_mine.append(n)
+        elif mine[n][0] != ref[0]:
+            differ.append((n, mine[n][0], ref[0]))
     only_ref = [n for n in reference if n not in mine]
     shapes = sum(1 for n in mine if n in reference and mine[n][1] != reference[n][1])
     print("  layout vs reference:")
@@ -594,6 +635,9 @@ def main():
         if stats["not_in_reference"]:
             print(f"warning: {len(stats['not_in_reference'])} tensors are not in the reference "
                   f"and keep their dtype, e.g. {stats['not_in_reference'][:3]}")
+        if stats["matched_by_role"]:
+            print(f"note: {stats['matched_by_role']} tensors of blocks the reference lacks took the "
+                  "dtype the reference uses for the same role in its other blocks")
         if stats["shape_differs"]:
             print(f"note: {stats['shape_differs']} tensors differ in shape from the reference "
                   "(a different model size); only the per-layer precision is copied")
