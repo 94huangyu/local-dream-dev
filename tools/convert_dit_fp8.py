@@ -5,7 +5,9 @@ This produces the same kind of file as the built-in Z-Image Turbo package
 (Kijai's z-image-turbo_fp8_scaled_e4m3fn_KJ.safetensors), which is what the
 Hexagon DiT engine runs fastest: every transformer-block linear weight is
 stored as FP8 E4M3 with one FP32 scale per tensor, and everything else keeps
-its original dtype.
+its original dtype. The scale convention also follows the built-in file:
+values in +-1 for Z-Image (Kijai), +-448 for FLUX.2 Klein (BFL); see
+SCALE_CONVENTION.
 
     pip install numpy ml_dtypes
     python tools/convert_dit_fp8.py input.safetensors output_fp8.safetensors
@@ -293,10 +295,24 @@ def should_quantize(name, shape):
     return len(shape) == 2 and any(p.search(name) for p in QUANTIZE_PATTERNS)
 
 
+# How a weight's largest magnitude maps onto FP8. Both dequantize to the same
+# weights, but the engine multiplies the scale in after the matmul, so the
+# convention sets how large the pre-scale results get on the NPU:
+#   "unit"   : FP8 values in +-1, scale = amax. Kijai's Z-Image FP8 (the built-in
+#              package). A Z-Image fine-tune written with "max448" produced
+#              NaN (a red center with striped edges) on the NPU, because its
+#              pre-scale results are ~448x larger than the validated file's.
+#   "max448" : FP8 values in +-448, scale = amax / 448. BFL's FLUX.2 Klein FP8.
+# The default follows the built-in file of the input's architecture.
+SCALE_CONVENTION = "max448"
+
+
 def fp8_scale(values):
-    """Per-tensor scale mapping the largest magnitude onto the FP8 E4M3 range."""
+    """Per-tensor scale for SCALE_CONVENTION."""
     amax = float(np.max(np.abs(values))) if values.size else 0.0
-    return amax / FP8_MAX if amax > 0 else 1.0
+    if amax <= 0:
+        return 1.0
+    return amax if SCALE_CONVENTION == "unit" else amax / FP8_MAX
 
 
 def quantize(values, scale):
@@ -619,9 +635,15 @@ def main():
                              "'klein4b', a local .safetensors or a URL (header only)")
     parser.add_argument("--verify", metavar="ORIGINAL",
                         help="check the input (a converted file) against the file it was made from")
+    parser.add_argument("--scale-convention", choices=["unit", "max448"],
+                        help="FP8 scale convention (default: unit for Z-Image like Kijai's "
+                             "built-in file, max448 for FLUX.2 Klein like BFL's)")
     args = parser.parse_args()
 
     src = SafetensorsFile(args.input)
+    global SCALE_CONVENTION
+    SCALE_CONVENTION = args.scale_convention or (
+        "unit" if describe(src)["arch"] == "Z-Image" else "max448")
     reference = reference_layout(args.like) if args.like else None
     if args.inspect or args.verify:
         print_report(args.input, describe(src))
@@ -650,10 +672,10 @@ def main():
                  "is this a Z-Image or FLUX.2 Klein DiT?")
 
     metadata = {k: str(v) for k, v in src.metadata.items()}
-    metadata["localdream.fp8"] = "e4m3fn per-tensor scale"
+    metadata["localdream.fp8"] = f"e4m3fn per-tensor scale, {SCALE_CONVENTION}"
     total = write_safetensors(args.output, outputs, metadata)
-    print(f"converted {stats['converted']} linear weights to FP8 E4M3, "
-          f"kept {stats['kept']} tensors as is")
+    print(f"converted {stats['converted']} linear weights to FP8 E4M3 "
+          f"({SCALE_CONVENTION} scales), kept {stats['kept']} tensors as is")
     print(f"{src.data.size / 2**30:.2f} GiB -> {total / 2**30:.2f} GiB, written to {args.output}")
     if args.check:
         print(f"worst relative error: {stats['worst']:.4%}")
