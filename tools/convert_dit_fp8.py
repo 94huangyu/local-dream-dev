@@ -376,6 +376,10 @@ def build_outputs(src, sources, check, reference=None):
         if dtype == "U8" and out_name.endswith(".weight"):
             sys.exit(f"{out_name}: packed U8 weights (NVFP4/MXFP4 style) are not supported; "
                      "use the BF16 or FP8 release of this model")
+        # The NPU stores BF16 weights as F16, so turning an F16 source into BF16
+        # only loses mantissa bits; keep 16-bit float sources as they are.
+        if target in ("BF16", "F16") and dtype in ("BF16", "F16"):
+            target = dtype
         wants_fp8 = (target == "F8_E4M3") if target is not None else (
             reference is None and should_quantize(out_name, shape))
         if (dtype in FLOAT_TYPES or dtype == "I8") and wants_fp8:
