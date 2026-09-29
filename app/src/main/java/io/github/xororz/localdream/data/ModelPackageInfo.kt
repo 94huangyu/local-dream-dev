@@ -139,11 +139,20 @@ object ModelPackageInfo {
 
     private fun skipValue(input: InputStream, type: Int) {
         when (type) {
-            0, 1, 7 -> skipFully(input, 1) // u8, i8, bool
-            2, 3 -> skipFully(input, 2) // u16, i16
-            4, 5, 6 -> skipFully(input, 4) // u32, i32, f32
-            10, 11, 12 -> skipFully(input, 8) // u64, i64, f64
+            0, 1, 7 -> skipFully(input, 1)
+
+            // u8, i8, bool
+            2, 3 -> skipFully(input, 2)
+
+            // u16, i16
+            4, 5, 6 -> skipFully(input, 4)
+
+            // u32, i32, f32
+            10, 11, 12 -> skipFully(input, 8)
+
+            // u64, i64, f64
             8 -> skipString(input)
+
             9 -> {
                 val elementType = readU32(input).toInt()
                 val count = readU64(input)
