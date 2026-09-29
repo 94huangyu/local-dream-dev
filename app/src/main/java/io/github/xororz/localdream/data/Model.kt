@@ -13,6 +13,7 @@ import io.github.xororz.localdream.R
 import io.github.xororz.localdream.service.ModelDownloadService
 import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -594,16 +595,31 @@ class ModelRepository private constructor(private val context: Context) {
             )
         }
         val config = ModelConfig.read(modelDir) ?: ModelConfig()
+        val configDefaults = config.withFallback(placeholders)
+
+        // Imported DiTs read like the built-in ones ("6B DiT, 8 steps."), with
+        // the step count the run screen will start from; other imports keep
+        // the generic label since their style is unknown.
+        val ditParams = if (ditKind.isNotEmpty()) ModelPackageInfo.ditParamLabel(modelDir) else null
+        val description = if (ditParams != null) {
+            context.getString(
+                R.string.dit_model_description,
+                ditParams,
+                configDefaults.resolve().steps.roundToInt(),
+            )
+        } else {
+            context.getString(R.string.custom_model)
+        }
 
         return Model(
             id = modelId,
             name = modelId,
-            description = context.getString(R.string.custom_model),
+            description = description,
             baseUrl = "",
             generationSize = if (isSdxl || isAnima || ditKind.isNotEmpty()) 1024 else 512,
-            approximateSize = "Custom",
+            approximateSize = ModelPackageInfo.packageSizeLabel(modelDir),
             isDownloaded = true,
-            configDefaults = config.withFallback(placeholders),
+            configDefaults = configDefaults,
             runOnCpu = !isNpu,
             isCustom = true,
             isSdxl = isSdxl,
