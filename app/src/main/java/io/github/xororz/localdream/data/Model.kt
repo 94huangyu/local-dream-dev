@@ -124,7 +124,8 @@ data class Model(
     val isCustom: Boolean = false,
     val isSdxl: Boolean = false,
     val isAnima: Boolean = false,
-    // DiT packages run by libdit_engine.so: "zimage", "klein" or "qwen21".
+    // DiT packages run by libdit_engine.so: "zimage", "klein", "qwen21" or
+    // "krea2" (import only, no built-in package).
     val ditKind: String = "",
     // Files that make up a package downloaded file-by-file rather than as one
     // zip, as "<path under baseUrl>|<name on disk>" pairs. Used by the DiT
@@ -361,6 +362,7 @@ data class Model(
             "zimage" -> "ZIMAGE"
             "klein" -> "KLEIN"
             "qwen21" -> "QWEN_IMAGE_2_1"
+            "krea2" -> "KREA2"
             else -> ""
         }
 
@@ -544,6 +546,7 @@ class ModelRepository private constructor(private val context: Context) {
                 val zImageFile = File(dir, "ZIMAGE")
                 val kleinFile = File(dir, "KLEIN")
                 val qwenImage21File = File(dir, "QWEN_IMAGE_2_1")
+                val krea2File = File(dir, "KREA2")
 
                 when {
                     zImageFile.exists() && DitEngine.isSupportedDevice() ->
@@ -554,6 +557,9 @@ class ModelRepository private constructor(private val context: Context) {
 
                     qwenImage21File.exists() && DitEngine.isSupportedDevice() ->
                         customModels.add(createCustomModel(dir, isNpu = true, ditKind = "qwen21"))
+
+                    krea2File.exists() && DitEngine.isSupportedDevice() ->
+                        customModels.add(createCustomModel(dir, isNpu = true, ditKind = "krea2"))
 
                     animaFile.exists() ->
                         customModels.add(createCustomModel(dir, isNpu = true, isAnima = true))

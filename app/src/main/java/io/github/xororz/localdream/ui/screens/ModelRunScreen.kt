@@ -353,12 +353,12 @@ fun ModelRunScreen(
     var useOpenCL by remember { mutableStateOf(false) }
     var batchCounts by remember { mutableIntStateOf(GenerationDefaults.GLOBAL.batchCounts) }
     var scheduler by remember { mutableStateOf(GenerationDefaults.GLOBAL.scheduler) }
-    // The DiT engine always samples with Euler, whatever the request says.
-    // Pin the state to it so saved prefs, shared params and history record
-    // what actually ran, however a different value got in (prefs, param
-    // import, reproducing an older entry).
+    // The DiT engine only runs DIT_SCHEDULERS and samples anything else with
+    // Euler. Pin the state to a supported id so saved prefs, shared params and
+    // history record what actually ran, however a different value got in
+    // (prefs, param import, reproducing an older entry).
     LaunchedEffect(model?.isDit, scheduler) {
-        if (model?.isDit == true && scheduler != DIT_SCHEDULER) scheduler = DIT_SCHEDULER
+        if (model?.isDit == true && scheduler !in DIT_SCHEDULERS) scheduler = DIT_SCHEDULER
     }
     var aspectRatio by remember { mutableStateOf(GenerationDefaults.GLOBAL.aspectRatio) }
     var showCustomAspectRatioDialog by remember { mutableStateOf(false) }

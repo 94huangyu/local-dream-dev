@@ -8,6 +8,8 @@ fun schedulerDisplayName(id: String?): String = when (id) {
     "lcm" -> "LCM"
     "euler" -> "Euler"
     "euler_karras" -> "Euler Karras"
+    "euler_beta" -> "Euler Beta"
+    "euler_a_beta" -> "Euler A Beta"
     "dpm_sde" -> "DPM++ 2M SDE"
     "dpm_sde_karras" -> "DPM++ 2M SDE Karras"
     null -> ""

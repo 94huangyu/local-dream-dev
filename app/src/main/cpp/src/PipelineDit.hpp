@@ -16,7 +16,8 @@
 #include "DitEngine.h"
 #include "Pipeline.hpp"
 
-// Z-Image Turbo, FLUX.2/Klein and Qwen Image 2.1, run by libdit_engine.so.
+// Z-Image Turbo, FLUX.2/Klein, Qwen Image 2.1 and Krea 2, run by
+// libdit_engine.so.
 //
 // Unlike every other pipeline here, this one owns no graphs and no scheduler:
 // the engine does the whole txt2img/img2img/inpaint round trip behind the DitEngine
@@ -204,7 +205,7 @@ class PipelineDit : public Pipeline {
     params.cfg_scale = req.cfg;
     params.guidance = kDistilledGuidance;
     params.seed = static_cast<int64_t>(req.seed);
-    params.sample_method = "euler";
+    params.sample_method = ditSampleMethod(req.scheduler_type);
     params.denoise_strength = req.denoise_strength;
     if ((!native_edit || edit_from_base) && !init_rgb.empty()) {
       params.init_image_rgb = init_rgb.data();
@@ -382,6 +383,17 @@ class PipelineDit : public Pipeline {
     bool done_ = false;
     std::thread thread_;
   };
+
+  // App scheduler id -> engine "sampler[/scheduler]". Only combinations
+  // checked on the DiT models are mapped; anything else, including SD-only
+  // ids such as "dpm" (its SDE variant renders flow-matching DiTs as blocky
+  // noise), runs plain Euler with the model's default schedule.
+  static const char *ditSampleMethod(const std::string &id) {
+    if (id == "euler_beta") return "euler/beta";
+    if (id == "euler_a") return "euler_a";
+    if (id == "euler_a_beta") return "euler_a/beta";
+    return "euler";
+  }
 
   bool isNativeEditModel() const {
     return kind_ == DIT_MODEL_FLUX2_KLEIN ||

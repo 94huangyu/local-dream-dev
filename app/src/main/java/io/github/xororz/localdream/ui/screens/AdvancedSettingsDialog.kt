@@ -248,8 +248,75 @@ internal fun AdvancedSettingsDialog(
                     }
                 }
 
-                // DiT models always sample with Euler (PipelineDit), so offering
-                // other schedulers there would only be ignored.
+                // DiT models run Euler or Euler A (PipelineDit.ditSampleMethod),
+                // each with the engine's per-model schedule or the beta one.
+                // The SD schedulers below are not offered: the SDE ones break
+                // flow-matching DiTs.
+                if (isDit) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        val baseId = scheduler.removeSuffix("_beta")
+                        val beta = scheduler.endsWith("_beta")
+                        val baseOptions = listOf(
+                            "euler" to "Euler",
+                            "euler_a" to "Euler A",
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                stringResource(R.string.scheduler),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "Beta",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                            CompositionLocalProvider(
+                                LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
+                            ) {
+                                Switch(
+                                    checked = beta,
+                                    onCheckedChange = { enable ->
+                                        onSchedulerChange(if (enable) "${baseId}_beta" else baseId)
+                                    },
+                                    modifier = Modifier.scale(0.8f),
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(
+                                ButtonGroupDefaults.ConnectedSpaceBetween,
+                            ),
+                        ) {
+                            baseOptions.forEachIndexed { index, (id, label) ->
+                                val shapes = when (index) {
+                                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+
+                                    baseOptions.lastIndex ->
+                                        ButtonGroupDefaults.connectedTrailingButtonShapes()
+
+                                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                                }
+                                ToggleButton(
+                                    checked = baseId == id,
+                                    onCheckedChange = { checked ->
+                                        if (checked) onSchedulerChange(if (beta) "${id}_beta" else id)
+                                    },
+                                    shapes = shapes,
+                                ) {
+                                    Text(label)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (!isDit) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // Split scheduler id into base + Karras flag so the UI

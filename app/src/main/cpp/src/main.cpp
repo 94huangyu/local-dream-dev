@@ -47,7 +47,7 @@
 //   anima:   tokenizer.json tokenizer_t5.json token_emb.bin clip.bin
 //            unet_part1.bin unet_part2.bin vae_decoder.bin
 //            [vae_encoder.bin] (optional; enables img2img/inpaint)
-//   zimage/klein: tokenizer.json dit.safetensors llm.gguf vae.safetensors
+//   zimage/klein/krea2: tokenizer.json dit.safetensors llm.gguf vae.safetensors
 //   qwen21:  tokenizer.json dit.gguf llm.gguf llm_vision.gguf vae.safetensors
 //   (either DiT may instead be the other of dit.safetensors / dit.gguf)
 // SD15/SDXL CLIP runs on MNN (CPU); Anima's CLIP (clip.bin) runs on QNN/HTP
@@ -62,6 +62,7 @@ struct ServerOptions {
     kZImage,
     kFlux2Klein,
     kQwenImage21,
+    kKrea2,
   };
 
   int port = 8081;
@@ -105,7 +106,7 @@ struct ServerOptions {
   // DiT formats served by libdit_engine.so: no fixed canvas, no QNN contexts.
   bool isDit() const {
     return type == ModelType::kZImage || type == ModelType::kFlux2Klein ||
-           type == ModelType::kQwenImage21;
+           type == ModelType::kQwenImage21 || type == ModelType::kKrea2;
   }
 };
 
@@ -122,7 +123,7 @@ static void showHelp() {
          "Modes:\n"
          "  --type <type>          Model format: sd15cpu (MNN), sd15npu "
          "(QNN), sdxl (QNN), sdxlmnn (MNN), anima (QNN), "
-         "zimage/klein/qwen21 "
+         "zimage/klein/qwen21/krea2 "
          "(DiT engine)\n"
          "  --upscaler_mode        Upscale-only server, no diffusion model\n"
          "  --convert <dir>        Convert model.safetensors in <dir> to MNN "
@@ -294,6 +295,8 @@ static ServerOptions processCommandLine(int argc, char **argv) {
     opts.type = ServerOptions::ModelType::kFlux2Klein;
   else if (typeStr == "qwen21")
     opts.type = ServerOptions::ModelType::kQwenImage21;
+  else if (typeStr == "krea2")
+    opts.type = ServerOptions::ModelType::kKrea2;
   else
     showHelpAndExit(typeStr.empty() ? "Missing --type"
                                     : "Invalid --type: " + typeStr);
@@ -382,12 +385,13 @@ static std::unique_ptr<Pipeline> createPipeline(const ServerOptions &opts,
         (std::filesystem::path(opts.lib_dir) / "libdit_engine.so").string();
     if (!std::filesystem::exists(engine_path))
       showHelpAndExit("DiT engine not installed: " + engine_path);
-    const dit_model_kind kind =
-        opts.type == ServerOptions::ModelType::kZImage
-            ? DIT_MODEL_Z_IMAGE
-            : opts.type == ServerOptions::ModelType::kFlux2Klein
-                  ? DIT_MODEL_FLUX2_KLEIN
-                  : DIT_MODEL_QWEN_IMAGE_2_1;
+    dit_model_kind kind = DIT_MODEL_QWEN_IMAGE_2_1;
+    switch (opts.type) {
+      case ServerOptions::ModelType::kZImage: kind = DIT_MODEL_Z_IMAGE; break;
+      case ServerOptions::ModelType::kFlux2Klein: kind = DIT_MODEL_FLUX2_KLEIN; break;
+      case ServerOptions::ModelType::kKrea2: kind = DIT_MODEL_KREA2; break;
+      default: break;
+    }
     return std::make_unique<PipelineDit>(
         text_encoder, opts.model_dir, engine_path, dit_path, llm_path,
         llm_vision_path, vae_path, kind, opts.dit_backend,

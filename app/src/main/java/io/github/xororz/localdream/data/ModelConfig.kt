@@ -56,6 +56,8 @@ data class ModelConfig(
             "euler", "euler_karras",
             "euler_a", "euler_a_karras",
             "lcm",
+            // DiT only (see DIT_SCHEDULERS): Euler / Euler A with the beta schedule.
+            "euler_beta", "euler_a_beta",
         )
 
         // Keep in sync with the steps/cfg slider ranges in ModelRunScreen.

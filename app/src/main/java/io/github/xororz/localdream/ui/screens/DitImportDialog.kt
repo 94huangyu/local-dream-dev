@@ -241,6 +241,7 @@ private fun shortKindLabel(kind: Kind): String = when (kind) {
     Kind.Z_IMAGE -> "Z-Image"
     Kind.FLUX2_KLEIN -> "Klein"
     Kind.QWEN_IMAGE_2_1 -> "Qwen 2.1"
+    Kind.KREA2 -> "Krea 2"
 }
 
 private fun displayName(context: Context, uri: Uri): String? = try {

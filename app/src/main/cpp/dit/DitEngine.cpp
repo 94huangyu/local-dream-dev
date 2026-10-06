@@ -199,8 +199,17 @@ bool engine_generate(dit_ctx *ctx, const dit_gen_params *params, dit_progress_cb
   gen.sample_params.sample_steps = params->steps;
   gen.sample_params.guidance.txt_cfg = params->cfg_scale;
   gen.sample_params.guidance.distilled_guidance = params->guidance;
-  if (params->sample_method && params->sample_method[0])
-    gen.sample_params.sample_method = str_to_sample_method(params->sample_method);
+  if (params->sample_method && params->sample_method[0]) {
+    // "method" or "method/scheduler", e.g. "euler_a/beta". Without a
+    // scheduler, stable-diffusion.cpp picks the default for the model.
+    const std::string spec = params->sample_method;
+    const size_t slash = spec.find('/');
+    gen.sample_params.sample_method = str_to_sample_method(spec.substr(0, slash).c_str());
+    if (slash != std::string::npos) {
+      const scheduler_t scheduler = str_to_scheduler(spec.substr(slash + 1).c_str());
+      if (scheduler != SCHEDULER_COUNT) gen.sample_params.scheduler = scheduler;
+    }
+  }
 
   if (params->init_image_rgb && params->init_width > 0 && params->init_height > 0) {
     gen.init_image.width = static_cast<uint32_t>(params->init_width);

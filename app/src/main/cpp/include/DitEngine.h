@@ -32,6 +32,9 @@ typedef enum {
   DIT_MODEL_Z_IMAGE = 0,
   DIT_MODEL_FLUX2_KLEIN = 1,
   DIT_MODEL_QWEN_IMAGE_2_1 = 2,
+  // Krea 2: stable-diffusion.cpp detects the architecture from the weights;
+  // the kind only marks it as having no native reference editing.
+  DIT_MODEL_KREA2 = 3,
 } dit_model_kind;
 
 typedef struct {
@@ -63,6 +66,9 @@ typedef struct {
   // architectures ignore it; this is not the same knob as cfg_scale.
   float guidance;
   int64_t seed;
+  // stable-diffusion.cpp sampler name, optionally followed by "/scheduler",
+  // e.g. "euler" or "euler_a/beta". An unknown name falls back to the
+  // model's default, so the field stays compatible across ABI version 5.
   const char *sample_method;
   // img2img: RGB8, init_width * init_height * 3 bytes, NULL for txt2img.
   const uint8_t *init_image_rgb;

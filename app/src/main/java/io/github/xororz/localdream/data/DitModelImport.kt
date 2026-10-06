@@ -115,6 +115,16 @@ object DitModelImport {
             ),
             "txt_in.text_norm",
         ),
+
+        // No built-in package: the Qwen3-VL-4B text encoder (llm.gguf), the
+        // Wan 2.1 VAE and the Qwen3-VL tokenizer have to be picked on import.
+        KREA2(
+            "krea2",
+            "Krea 2",
+            "",
+            listOf(Component.TEXT_ENCODER, Component.VAE, Component.TOKENIZER),
+            "txtfusion.",
+        ),
     }
 
     private enum class WeightFormat(val fileName: String) {
@@ -156,6 +166,17 @@ object DitModelImport {
             denoiseStrength = 1f,
         )
 
+        // Turbo-style Krea 2 fine-tunes (e.g. Moody Krea 2 Mix) are published
+        // with Euler A + beta at 8 steps; plain Euler with the default
+        // schedule renders muddy, blotchy backgrounds and skin.
+        "krea2" -> ModelConfig(
+            prompt = "a lovely cat wearing black sunglasses, studio photo,",
+            negativePrompt = "",
+            steps = 8f,
+            cfg = 1f,
+            scheduler = "euler_a_beta",
+        )
+
         else -> ModelConfig()
     }
 
@@ -164,6 +185,7 @@ object DitModelImport {
      * that package is not fully downloaded.
      */
     fun builtinFile(context: Context, kind: Kind, component: Component): File? {
+        if (kind.builtinModelId.isEmpty()) return null
         val dir = File(Model.getModelsDir(context), kind.builtinModelId)
         if (!File(dir, Model.markerFileName(kind.ditKind)).isFile) return null
         return File(dir, component.fileName).takeIf { it.isFile && it.length() > 0L }

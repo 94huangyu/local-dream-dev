@@ -254,8 +254,14 @@ const val DIT_SIZE_STEPS = DitResolution.SLIDER_STEPS
 
 fun snapDitSize(value: Float): Int = DitResolution.snap(value)
 
-/** The only sampler PipelineDit runs; see its sample_method. */
+/** Default DiT sampler: Euler with the engine's per-model schedule. */
 const val DIT_SCHEDULER = "euler"
+
+/**
+ * Samplers PipelineDit maps to the engine (see its ditSampleMethod). Other
+ * ids are SD-only; the SDE samplers in particular break flow-matching DiTs.
+ */
+val DIT_SCHEDULERS = setOf("euler", "euler_beta", "euler_a", "euler_a_beta")
 
 /**
  * GCD-reduces (width, height) into a "W:H" aspect-ratio string.
