@@ -285,7 +285,7 @@
     <string name="preparing_npu_model">正在准备模型…</string>
     <string name="extracting_zip_file">解压ZIP文件中…</string>
     <string name="import_dit_model">导入 DiT 模型</string>
-    <string name="dit_import_hint">导入基于 Z-Image Turbo、FLUX.2 Klein 或 Qwen Image 2.1 的微调/融合模型，只需单个 DiT 文件（.safetensors 或 .gguf）。FP8 E4M3 safetensors 最快；BF16 文件可以加载，但体积翻倍且慢很多，建议先转换。文本编码器、VAE 和分词器默认与同类型的内置模型共用，也可以自己选择文件。</string>
+    <string name="dit_import_hint">导入基于 Z-Image Turbo、FLUX.2 Klein、Qwen Image 2.1 或 Krea 2 的微调/融合模型，只需单个 DiT 文件（.safetensors 或 .gguf）。FP8 E4M3 safetensors 最快；BF16 文件可以加载，但体积翻倍且慢很多，建议先转换。文本编码器、VAE 和分词器默认与同类型的内置模型共用，也可以自己选择文件；Krea 2 没有内置模型，这三个文件都需要自己选择。</string>
     <string name="dit_import_kind">基础模型</string>
     <string name="dit_import_select_dit">选择 DiT 权重（.safetensors / .gguf）</string>
     <string name="dit_component_text_encoder">文本编码器（llm.gguf）</string>
@@ -294,6 +294,7 @@
     <string name="dit_component_tokenizer">分词器（tokenizer.json）</string>
     <string name="dit_component_from_builtin">与内置 %s 共用</string>
     <string name="dit_component_missing">请先下载内置 %s，或选择文件</string>
+    <string name="dit_component_no_builtin">没有内置 %s，请选择文件</string>
     <string name="dit_component_choose">选择</string>
     <string name="dit_component_reset">重置</string>
     <string name="dit_import_checking">正在检查 DiT 权重…</string>

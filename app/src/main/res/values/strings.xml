@@ -295,7 +295,7 @@
     <string name="preparing_npu_model">Preparing model…</string>
     <string name="extracting_zip_file">Extracting ZIP file…</string>
     <string name="import_dit_model">Import DiT Model</string>
-    <string name="dit_import_hint">Import a fine-tuned or merged Z-Image Turbo, FLUX.2 Klein or Qwen Image 2.1 as a single DiT file (.safetensors or .gguf). FP8 E4M3 safetensors run fastest; BF16 files are loaded but are twice the size and much slower, so convert them first. The text encoder, VAE and tokenizer are shared with the built-in model of the same type unless you pick your own.</string>
+    <string name="dit_import_hint">Import a fine-tuned or merged Z-Image Turbo, FLUX.2 Klein, Qwen Image 2.1 or Krea 2 as a single DiT file (.safetensors or .gguf). FP8 E4M3 safetensors run fastest; BF16 files are loaded but are twice the size and much slower, so convert them first. The text encoder, VAE and tokenizer are shared with the built-in model of the same type unless you pick your own. Krea 2 has no built-in model, so pick all three.</string>
     <string name="dit_import_kind">Base model</string>
     <string name="dit_import_select_dit">Select DiT weights (.safetensors / .gguf)</string>
     <string name="dit_component_text_encoder">Text encoder (llm.gguf)</string>
@@ -304,6 +304,7 @@
     <string name="dit_component_tokenizer">Tokenizer (tokenizer.json)</string>
     <string name="dit_component_from_builtin">Shared with built-in %s</string>
     <string name="dit_component_missing">Download the built-in %s or choose a file</string>
+    <string name="dit_component_no_builtin">No built-in %s, choose a file</string>
     <string name="dit_component_choose">Choose</string>
     <string name="dit_component_reset">Reset</string>
     <string name="dit_import_checking">Checking DiT weights…</string>

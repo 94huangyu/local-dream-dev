@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -129,7 +130,10 @@ fun DitImportDialog(existingIds: Set<String>, onDismiss: () -> Unit, onImport: (
                     text = stringResource(R.string.dit_import_kind),
                     style = MaterialTheme.typography.labelLarge,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Wraps instead of squeezing: four kinds overflow a narrow
+                // dialog (~347dp wide phone), and a plain Row crushed the last
+                // chip into an unreadable vertical strip.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Kind.entries.forEach { option ->
                         FilterChip(
                             selected = kind == option,
@@ -168,6 +172,11 @@ fun DitImportDialog(existingIds: Set<String>, onDismiss: () -> Unit, onImport: (
 
                         builtinAvailable[component] == true ->
                             stringResource(R.string.dit_component_from_builtin, kind.displayName)
+
+                        // Kinds without a built-in package (Krea 2) cannot be
+                        // fixed by downloading one; ask for the file instead.
+                        kind.builtinModelId.isEmpty() ->
+                            stringResource(R.string.dit_component_no_builtin, kind.displayName)
 
                         else -> stringResource(R.string.dit_component_missing, kind.displayName)
                     }
