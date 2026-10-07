@@ -178,7 +178,9 @@ fun DitImportDialog(existingIds: Set<String>, onDismiss: () -> Unit, onImport: (
                         kind.builtinModelId.isEmpty() ->
                             stringResource(R.string.dit_component_no_builtin, kind.displayName)
 
-                        else -> stringResource(R.string.dit_component_missing, kind.displayName)
+                        // The selected kind is right above; the name would only
+                        // wrap the line on narrow screens.
+                        else -> stringResource(R.string.dit_component_missing)
                     }
                     val missing = pickedName == null && builtinAvailable[component] != true
                     Row(
